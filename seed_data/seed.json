@@ -1,0 +1,441 @@
+{
+  "seed": 42,
+  "owners": [
+    "Anita Verma",
+    "Arjun Reddy",
+    "Farhan Sheikh",
+    "Imran Qureshi",
+    "Kavita Rao",
+    "Lakshmi Narayanan",
+    "Meera Iyer",
+    "Neha Kapoor",
+    "Priya Menon",
+    "Ravi Kumar",
+    "Sourav Das",
+    "Suresh Nair"
+  ],
+  "properties": [
+    {
+      "property_id": 1,
+      "owner": "Ravi Kumar",
+      "property_name": "Lakeview Apartments 4B",
+      "city": "Bengaluru",
+      "account_id": "1000000001",
+      "rr_number": "BLR91SMP2824",
+      "address": "NO 5 LAKEVIEW APARTMENTS 4B, HSR LAYOUT, BENGALURU - 560145",
+      "tariff": "LT1",
+      "sanctioned_kw": 3,
+      "mr_code": "13744854"
+    },
+    {
+      "property_id": 2,
+      "owner": "Ravi Kumar",
+      "property_name": "Seaside Heights 12",
+      "city": "Mumbai",
+      "account_id": "1000000002",
+      "rr_number": "MUM30SMP7924",
+      "address": "NO 45 SEASIDE HEIGHTS 12, ANDHERI WEST, MUMBAI - 400045",
+      "tariff": "LT1",
+      "sanctioned_kw": 3,
+      "mr_code": "13612365"
+    },
+    {
+      "property_id": 3,
+      "owner": "Meera Iyer",
+      "property_name": "Palm Residency 201",
+      "city": "Bengaluru",
+      "account_id": "1000000003",
+      "rr_number": "BLR34SMP2139",
+      "address": "NO 7 PALM RESIDENCY 201, WHITEFIELD, BENGALURU - 560094",
+      "tariff": "LT1",
+      "sanctioned_kw": 3,
+      "mr_code": "14855124"
+    },
+    {
+      "property_id": 4,
+      "owner": "Meera Iyer",
+      "property_name": "Adyar Court 7",
+      "city": "Chennai",
+      "account_id": "1000000004",
+      "rr_number": "CHE41SMP3677",
+      "address": "NO 61 ADYAR COURT 7, ADYAR, CHENNAI - 600058",
+      "tariff": "LT1",
+      "sanctioned_kw": 4,
+      "mr_code": "19344066"
+    },
+    {
+      "property_id": 5,
+      "owner": "Farhan Sheikh",
+      "property_name": "Andheri Nest",
+      "city": "Mumbai",
+      "account_id": "1000000005",
+      "rr_number": "MUM27SMP5040",
+      "address": "NO 97 ANDHERI NEST, ANDHERI EAST, MUMBAI - 400081",
+      "tariff": "LT1",
+      "sanctioned_kw": 4,
+      "mr_code": "19807725"
+    },
+    {
+      "property_id": 6,
+      "owner": "Anita Verma",
+      "property_name": "Dwarka Villa",
+      "city": "Delhi",
+      "account_id": "1000000006",
+      "rr_number": "DEL69SMP9669",
+      "address": "NO 34 DWARKA VILLA, DWARKA SEC 12, DELHI - 110080",
+      "tariff": "LT1",
+      "sanctioned_kw": 2,
+      "mr_code": "11921859"
+    },
+    {
+      "property_id": 7,
+      "owner": "Anita Verma",
+      "property_name": "Gachibowli Towers 9C",
+      "city": "Hyderabad",
+      "account_id": "1000000007",
+      "rr_number": "HYD29SMP7126",
+      "address": "NO 99 GACHIBOWLI TOWERS 9C, GACHIBOWLI, HYDERABAD - 500030",
+      "tariff": "LT1",
+      "sanctioned_kw": 2,
+      "mr_code": "15438436"
+    },
+    {
+      "property_id": 8,
+      "owner": "Suresh Nair",
+      "property_name": "Koregaon Park Row 3",
+      "city": "Pune",
+      "account_id": "1000000008",
+      "rr_number": "PUN43SMP9645",
+      "address": "NO 79 KOREGAON PARK ROW 3, KOREGAON PARK, PUNE - 411064",
+      "tariff": "LT1",
+      "sanctioned_kw": 3,
+      "mr_code": "19047886"
+    },
+    {
+      "property_id": 9,
+      "owner": "Priya Menon",
+      "property_name": "Salt Lake Greens 5A",
+      "city": "Kolkata",
+      "account_id": "1000000009",
+      "rr_number": "KOL90SMP1964",
+      "address": "NO 31 SALT LAKE GREENS 5A, SALT LAKE, KOLKATA - 700018",
+      "tariff": "LT1",
+      "sanctioned_kw": 2,
+      "mr_code": "15543670"
+    },
+    {
+      "property_id": 10,
+      "owner": "Suresh Nair",
+      "property_name": "Indiranagar Court 8",
+      "city": "Bengaluru",
+      "account_id": "1000000010",
+      "rr_number": "BLR69SMP1887",
+      "address": "NO 88 INDIRANAGAR COURT 8, INDIRANAGAR, BENGALURU - 560093",
+      "tariff": "LT1",
+      "sanctioned_kw": 2,
+      "mr_code": "11016911"
+    },
+    {
+      "property_id": 11,
+      "owner": "Kavita Rao",
+      "property_name": "Jayanagar Heights 6",
+      "city": "Bengaluru",
+      "account_id": "1000000011",
+      "rr_number": "BLR21SMP4872",
+      "address": "NO 23 JAYANAGAR HEIGHTS 6, JAYANAGAR, BENGALURU - 560062",
+      "tariff": "LT1",
+      "sanctioned_kw": 5,
+      "mr_code": "18075854"
+    },
+    {
+      "property_id": 12,
+      "owner": "Imran Qureshi",
+      "property_name": "Bandra Pearl 14",
+      "city": "Mumbai",
+      "account_id": "1000000012",
+      "rr_number": "MUM50SMP1936",
+      "address": "NO 8 BANDRA PEARL 14, BANDRA WEST, MUMBAI - 400084",
+      "tariff": "LT1",
+      "sanctioned_kw": 5,
+      "mr_code": "18436429"
+    },
+    {
+      "property_id": 13,
+      "owner": "Neha Kapoor",
+      "property_name": "Vasant Kunj Flat 22",
+      "city": "Delhi",
+      "account_id": "1000000013",
+      "rr_number": "DEL76SMP6183",
+      "address": "NO 35 VASANT KUNJ FLAT 22, VASANT KUNJ, DELHI - 110036",
+      "tariff": "LT1",
+      "sanctioned_kw": 4,
+      "mr_code": "14004485"
+    },
+    {
+      "property_id": 14,
+      "owner": "Arjun Reddy",
+      "property_name": "Jubilee Hills Villa 3",
+      "city": "Hyderabad",
+      "account_id": "1000000014",
+      "rr_number": "HYD41SMP7054",
+      "address": "NO 38 JUBILEE HILLS VILLA 3, JUBILEE HILLS, HYDERABAD - 500030",
+      "tariff": "LT1",
+      "sanctioned_kw": 5,
+      "mr_code": "19113685"
+    },
+    {
+      "property_id": 15,
+      "owner": "Lakshmi Narayanan",
+      "property_name": "T Nagar Residency 9",
+      "city": "Chennai",
+      "account_id": "1000000015",
+      "rr_number": "CHE53SMP4335",
+      "address": "NO 89 T NAGAR RESIDENCY 9, T NAGAR, CHENNAI - 600091",
+      "tariff": "LT1",
+      "sanctioned_kw": 4,
+      "mr_code": "18479356"
+    },
+    {
+      "property_id": 16,
+      "owner": "Kavita Rao",
+      "property_name": "Baner Hills 11B",
+      "city": "Pune",
+      "account_id": "1000000016",
+      "rr_number": "PUN24SMP2232",
+      "address": "NO 90 BANER HILLS 11B, BANER, PUNE - 411029",
+      "tariff": "LT1",
+      "sanctioned_kw": 2,
+      "mr_code": "16194416"
+    },
+    {
+      "property_id": 17,
+      "owner": "Sourav Das",
+      "property_name": "Park Street Court 4",
+      "city": "Kolkata",
+      "account_id": "1000000017",
+      "rr_number": "KOL32SMP7755",
+      "address": "NO 5 PARK STREET COURT 4, PARK STREET, KOLKATA - 700032",
+      "tariff": "LT1",
+      "sanctioned_kw": 4,
+      "mr_code": "16907400"
+    },
+    {
+      "property_id": 18,
+      "owner": "Neha Kapoor",
+      "property_name": "Koramangala Apt 12",
+      "city": "Bengaluru",
+      "account_id": "1000000018",
+      "rr_number": "BLR54SMP9346",
+      "address": "NO 53 KORAMANGALA APT 12, KORAMANGALA, BENGALURU - 560096",
+      "tariff": "LT1",
+      "sanctioned_kw": 4,
+      "mr_code": "10463060"
+    },
+    {
+      "property_id": 19,
+      "owner": "Arjun Reddy",
+      "property_name": "Powai Lake View 7",
+      "city": "Mumbai",
+      "account_id": "1000000019",
+      "rr_number": "MUM78SMP4228",
+      "address": "NO 48 POWAI LAKE VIEW 7, POWAI, MUMBAI - 400065",
+      "tariff": "LT1",
+      "sanctioned_kw": 2,
+      "mr_code": "15539837"
+    },
+    {
+      "property_id": 20,
+      "owner": "Priya Menon",
+      "property_name": "Anna Nagar West 15",
+      "city": "Chennai",
+      "account_id": "1000000020",
+      "rr_number": "CHE48SMP7653",
+      "address": "NO 72 ANNA NAGAR WEST 15, ANNA NAGAR, CHENNAI - 600010",
+      "tariff": "LT1",
+      "sanctioned_kw": 4,
+      "mr_code": "14813613"
+    }
+  ],
+  "bills": [
+    {
+      "bill_id": "bill_001",
+      "property_id": 14,
+      "account_id": "1000000014",
+      "bill_period_start": "05/10/2026",
+      "noise_level": "clean",
+      "image": "bills/bill_001.jpg",
+      "ground_truth": "ground_truth/bill_001.json"
+    },
+    {
+      "bill_id": "bill_002",
+      "property_id": 3,
+      "account_id": "1000000003",
+      "bill_period_start": "02/10/2026",
+      "noise_level": "noisy",
+      "image": "bills/bill_002.jpg",
+      "ground_truth": "ground_truth/bill_002.json"
+    },
+    {
+      "bill_id": "bill_003",
+      "property_id": 9,
+      "account_id": "1000000009",
+      "bill_period_start": "02/10/2026",
+      "noise_level": "noisy",
+      "image": "bills/bill_003.jpg",
+      "ground_truth": "ground_truth/bill_003.json"
+    },
+    {
+      "bill_id": "bill_004",
+      "property_id": 13,
+      "account_id": "1000000013",
+      "bill_period_start": "05/10/2026",
+      "noise_level": "clean",
+      "image": "bills/bill_004.jpg",
+      "ground_truth": "ground_truth/bill_004.json"
+    },
+    {
+      "bill_id": "bill_005",
+      "property_id": 11,
+      "account_id": "1000000011",
+      "bill_period_start": "04/10/2026",
+      "noise_level": "medium",
+      "image": "bills/bill_005.jpg",
+      "ground_truth": "ground_truth/bill_005.json"
+    },
+    {
+      "bill_id": "bill_006",
+      "property_id": 16,
+      "account_id": "1000000016",
+      "bill_period_start": "03/10/2026",
+      "noise_level": "medium",
+      "image": "bills/bill_006.jpg",
+      "ground_truth": "ground_truth/bill_006.json"
+    },
+    {
+      "bill_id": "bill_007",
+      "property_id": 6,
+      "account_id": "1000000006",
+      "bill_period_start": "05/10/2026",
+      "noise_level": "clean",
+      "image": "bills/bill_007.jpg",
+      "ground_truth": "ground_truth/bill_007.json"
+    },
+    {
+      "bill_id": "bill_008",
+      "property_id": 17,
+      "account_id": "1000000017",
+      "bill_period_start": "04/10/2026",
+      "noise_level": "noisy",
+      "image": "bills/bill_008.jpg",
+      "ground_truth": "ground_truth/bill_008.json"
+    },
+    {
+      "bill_id": "bill_009",
+      "property_id": 12,
+      "account_id": "1000000012",
+      "bill_period_start": "03/10/2026",
+      "noise_level": "noisy",
+      "image": "bills/bill_009.jpg",
+      "ground_truth": "ground_truth/bill_009.json"
+    },
+    {
+      "bill_id": "bill_010",
+      "property_id": 2,
+      "account_id": "1000000002",
+      "bill_period_start": "06/10/2026",
+      "noise_level": "noisy",
+      "image": "bills/bill_010.jpg",
+      "ground_truth": "ground_truth/bill_010.json"
+    },
+    {
+      "bill_id": "bill_011",
+      "property_id": 19,
+      "account_id": "1000000019",
+      "bill_period_start": "06/10/2026",
+      "noise_level": "medium",
+      "image": "bills/bill_011.jpg",
+      "ground_truth": "ground_truth/bill_011.json"
+    },
+    {
+      "bill_id": "bill_012",
+      "property_id": 18,
+      "account_id": "1000000018",
+      "bill_period_start": "02/10/2026",
+      "noise_level": "medium",
+      "image": "bills/bill_012.jpg",
+      "ground_truth": "ground_truth/bill_012.json"
+    },
+    {
+      "bill_id": "bill_013",
+      "property_id": 4,
+      "account_id": "1000000004",
+      "bill_period_start": "04/10/2026",
+      "noise_level": "medium",
+      "image": "bills/bill_013.jpg",
+      "ground_truth": "ground_truth/bill_013.json"
+    },
+    {
+      "bill_id": "bill_014",
+      "property_id": 15,
+      "account_id": "1000000015",
+      "bill_period_start": "08/10/2026",
+      "noise_level": "clean",
+      "image": "bills/bill_014.jpg",
+      "ground_truth": "ground_truth/bill_014.json"
+    },
+    {
+      "bill_id": "bill_015",
+      "property_id": 1,
+      "account_id": "1000000001",
+      "bill_period_start": "03/10/2026",
+      "noise_level": "noisy",
+      "image": "bills/bill_015.jpg",
+      "ground_truth": "ground_truth/bill_015.json"
+    },
+    {
+      "bill_id": "bill_016",
+      "property_id": 5,
+      "account_id": "1000000005",
+      "bill_period_start": "07/10/2026",
+      "noise_level": "medium",
+      "image": "bills/bill_016.jpg",
+      "ground_truth": "ground_truth/bill_016.json"
+    },
+    {
+      "bill_id": "bill_017",
+      "property_id": 7,
+      "account_id": "1000000007",
+      "bill_period_start": "08/10/2026",
+      "noise_level": "clean",
+      "image": "bills/bill_017.jpg",
+      "ground_truth": "ground_truth/bill_017.json"
+    },
+    {
+      "bill_id": "bill_018",
+      "property_id": 20,
+      "account_id": "1000000020",
+      "bill_period_start": "04/10/2026",
+      "noise_level": "clean",
+      "image": "bills/bill_018.jpg",
+      "ground_truth": "ground_truth/bill_018.json"
+    },
+    {
+      "bill_id": "bill_019",
+      "property_id": 10,
+      "account_id": "1000000010",
+      "bill_period_start": "07/10/2026",
+      "noise_level": "clean",
+      "image": "bills/bill_019.jpg",
+      "ground_truth": "ground_truth/bill_019.json"
+    },
+    {
+      "bill_id": "bill_020",
+      "property_id": 8,
+      "account_id": "1000000008",
+      "bill_period_start": "04/10/2026",
+      "noise_level": "medium",
+      "image": "bills/bill_020.jpg",
+      "ground_truth": "ground_truth/bill_020.json"
+    }
+  ]
+}
