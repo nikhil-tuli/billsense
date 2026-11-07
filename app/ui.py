@@ -4,7 +4,7 @@ from nicegui import app as nicegui_app, run, ui
 
 from app import cascade, db, metrics, services
 from app.config import get_settings
-from app.fields import LABELS, PRIMARY, SECONDARY
+from app.fields import KEYS, LABELS, PRIMARY, SECONDARY
 
 PRIMARY_COLS = [{"name": k, "label": LABELS[k], "field": k, "align": "left"} for k in PRIMARY]
 
@@ -65,7 +65,7 @@ async def index():
     except DbDown:
         db_down_notice(lambda: ui.navigate.reload())
         return
-    state = {"city": None, "owner": None, "property": None, "bill": None}
+    state = {"city": None, "owner": None, "property": None, "open": set()}
 
     with ui.tabs().classes("w-full") as tabs:
         t_bills = ui.tab("Bills")
@@ -73,63 +73,104 @@ async def index():
         t_eval = ui.tab("Evaluation")
 
     # ---------------- Bills tab ----------------
+    def _detail(bid, ev_rows):
+        """Per-field comparison shown when a scanned bill is expanded (extracted vs ground truth, judge verdict)."""
+        by_field = {r["field"]: r for r in ev_rows}
+        out = []
+        for k in KEYS:
+            r = by_field.get(k)
+            if not r:
+                continue
+            verdict = r["judge_verdict"]
+            out.append({"k": k, "f": LABELS[k], "p": k in PRIMARY,
+                        "e": "-" if r["extracted"] is None else r["extracted"],
+                        "t": "-" if r["truth"] is None else r["truth"],
+                        "m": bool(r["extractor_match"]),
+                        "j": "" if verdict is None else ("no verdict" if verdict == "missing" else verdict)})
+        return out
+
     @ui.refreshable
     async def bills_table():
         try:
-            all_bills = await _load(db.bills)
+            all_bills, ev = await _load(lambda: (db.bills(), db.all_eval()))
         except DbDown:
             return db_down_notice(bills_table.refresh)
+        ev_by_bill = {}
+        for r in ev:
+            ev_by_bill.setdefault(r["bill_id"], []).append(r)
         rows = []
         for b in cascade.filter_bills(all_bills, state):
-            rows.append({"bill_id": b["bill_id"], "property": b["property_name"], "city": b["city"],
-                         "owner": b["owner"], "period": f'{b["bill_period_start"]:%d/%m/%Y} - {b["bill_period_end"]:%d/%m/%Y}',
-                         "status": "Scanned" if b["scan_status"] == "scanned" else "Not scanned",
-                         "scanned": b["scan_status"] == "scanned"})
-        cols = [{"name": "property", "label": "Property", "field": "property", "align": "left"},
+            scanned = b["scan_status"] == "scanned"
+            rows.append({"bill_id": b["bill_id"], "account_id": (b["extracted_account_id"] or "") if scanned else "",
+                         "property": b["property_name"], "city": b["city"], "owner": b["owner"],
+                         "period": f'{b["bill_period_start"]:%d/%m/%Y} - {b["bill_period_end"]:%d/%m/%Y}',
+                         "status": "Scanned" if scanned else "Not scanned", "scanned": scanned, "noise": b["noise_level"],
+                         "detail": _detail(b["bill_id"], ev_by_bill.get(b["bill_id"], [])) if scanned else [],
+                         "_open": b["bill_id"] in state["open"], "_all": False, "_mm": False, "_zoom": False})
+        cols = [{"name": "account_id", "label": "Account ID", "field": "account_id", "align": "left"},
+                {"name": "property", "label": "Property", "field": "property", "align": "left"},
                 {"name": "city", "label": "City", "field": "city", "align": "left"},
                 {"name": "owner", "label": "Owner", "field": "owner", "align": "left"},
                 {"name": "period", "label": "Bill period", "field": "period", "align": "left"},
                 {"name": "status", "label": "Status", "field": "status", "align": "left"},
                 {"name": "action", "label": "", "field": "action"}]
         t = ui.table(columns=cols, rows=rows, row_key="bill_id").classes("w-full")
-        t.add_slot("body-cell-action", """<q-td :props="props">
-            <q-btn size="sm" dense outline :label="props.row.scanned ? 'Re-scan' : 'Scan'"
-                   @click.stop="() => $parent.$emit('scan', props.row.bill_id)" /></q-td>""")
+        t.add_slot("header", """<q-tr :props="props"><q-th auto-width />
+            <q-th v-for="col in props.cols" :key="col.name" :props="props">{{ col.label }}</q-th></q-tr>""")
+        t.add_slot("body", r"""
+            <q-tr :props="props">
+              <q-td auto-width><q-btn size="sm" flat round dense :icon="props.row._open ? 'expand_more' : 'chevron_right'"
+                    @click="props.row._open = !props.row._open" /></q-td>
+              <q-td v-for="col in props.cols" :key="col.name" :props="props">
+                <q-btn v-if="col.name === 'action'" size="sm" dense outline :label="props.row.scanned ? 'Re-scan' : 'Scan'"
+                       @click.stop="() => $parent.$emit('scan', props.row.bill_id)" />
+                <span v-else-if="col.name === 'status'"><q-badge :color="props.row.scanned ? 'positive' : 'grey'"
+                       :label="col.value" /></span>
+                <span v-else>{{ col.value }}</span>
+              </q-td>
+            </q-tr>
+            <q-tr v-if="props.row._open" :props="props">
+              <q-td colspan="100%" class="bg-grey-1">
+                <div class="row no-wrap q-gutter-md q-pa-sm">
+                  <div style="width:260px;flex:none">
+                    <img :src="'/bill_image/' + props.row.bill_id" style="width:100%;cursor:zoom-in;border:1px solid #ccc"
+                         @click="props.row._zoom = true" />
+                    <div class="text-caption text-grey q-mt-xs">{{ props.row.bill_id }} · noise: {{ props.row.noise }} · click image to enlarge</div>
+                    <q-dialog v-model="props.row._zoom"><img :src="'/bill_image/' + props.row.bill_id"
+                         style="max-width:92vw;max-height:92vh;background:white" /></q-dialog>
+                  </div>
+                  <div style="flex:1;min-width:0">
+                    <div v-if="!props.row.scanned" class="text-grey">Not scanned yet. Press Scan on this row.</div>
+                    <div v-else>
+                      <table style="width:100%;table-layout:fixed;border-collapse:collapse;font-size:13px">
+                        <colgroup><col style="width:20%" /><col style="width:30%" /><col style="width:30%" /><col style="width:8%" /><col style="width:12%" /></colgroup>
+                        <thead><tr><th class="text-left" style="height:auto;padding:2px 6px">Field</th><th class="text-left" style="height:auto;padding:2px 6px">Extracted</th>
+                          <th class="text-left" style="height:auto;padding:2px 6px">Ground truth</th><th class="text-left" style="height:auto;padding:2px 6px">Match</th><th class="text-left" style="height:auto;padding:2px 6px">Judge</th></tr></thead>
+                        <tbody>
+                          <tr v-for="d in props.row.detail.filter(d => (props.row._all || d.p) && (!props.row._mm || !d.m))"
+                              :key="d.k" :class="d.m ? '' : 'bg-red-1'">
+                            <td style="padding:2px 6px;height:auto;white-space:normal;overflow-wrap:anywhere">{{ d.f }}</td><td style="padding:2px 6px;height:auto;white-space:normal;overflow-wrap:anywhere">{{ d.e }}</td><td style="padding:2px 6px;height:auto;white-space:normal;overflow-wrap:anywhere">{{ d.t }}</td>
+                            <td style="padding:2px 6px;height:auto"><q-icon v-if="d.m" name="check" color="positive" /><q-icon v-else name="close" color="negative" /></td>
+                            <td style="padding:2px 6px;height:auto">{{ d.j }}</td>
+                          </tr>
+                        </tbody>
+                      </table>
+                      <div class="q-mt-sm text-caption text-grey">
+                        Showing {{ props.row.detail.filter(d => (props.row._all || d.p) && (!props.row._mm || !d.m)).length }}
+                        of {{ props.row.detail.length }} fields
+                        <q-btn flat dense size="sm" no-caps :label="props.row._all ? 'Primary fields only' : 'Show all fields'"
+                               @click="props.row._all = !props.row._all" />
+                        <q-btn flat dense size="sm" no-caps :label="props.row._mm ? 'Show all rows' : 'Mismatches only'"
+                               @click="props.row._mm = !props.row._mm" />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </q-td>
+            </q-tr>""")
         t.on("scan", lambda e: do_scan(e.args))
-        t.on("rowClick", lambda e: select_bill(e.args[1]["bill_id"]))
         if not rows:
             ui.label("No bills match the selected filters.").classes("text-grey")
-
-    @ui.refreshable
-    async def bill_detail():
-        bid = state["bill"]
-        if not bid:
-            ui.label("Select a bill to see its image and extracted fields.").classes("text-grey")
-            return
-        try:
-            row = await _load(db.get_extraction, bid)
-        except DbDown:
-            return db_down_notice(bill_detail.refresh)
-        fields = db.extraction_fields(row)
-        with ui.row().classes("w-full no-wrap gap-6"):
-            ui.image(f"/bill_image/{bid}").props("fit=contain").classes("w-96")
-            with ui.column().classes("gap-1"):
-                if not row:
-                    ui.label("Not scanned yet. Press Scan on the bill row.").classes("text-grey")
-                else:
-                    for k, v in _kv(fields, PRIMARY):
-                        with ui.row().classes("gap-2"):
-                            ui.label(k + ":").classes("text-grey w-44")
-                            ui.label(v).classes("font-medium")
-                    with ui.expansion("Secondary fields").classes("w-full"):
-                        for k, v in _kv(fields, SECONDARY):
-                            with ui.row().classes("gap-2"):
-                                ui.label(k + ":").classes("text-grey w-44")
-                                ui.label(v)
-
-    async def select_bill(bid):
-        state["bill"] = bid
-        bill_detail.refresh()
 
     async def do_scan(bid):
         if not s.writes_enabled:
@@ -142,9 +183,8 @@ async def index():
             res = {"ok": False, "message": f"Scan failed: {e}"}
         n.dismiss()
         ui.notify(res["message"], type="positive" if res["ok"] else "negative")
-        state["bill"] = bid
+        state["open"].add(bid)
         bills_table.refresh()
-        bill_detail.refresh()
 
     def on_filter(name):
         def handler(e):
@@ -167,8 +207,6 @@ async def index():
                     selects[name] = ui.select(opts[name], label=label, value=None, clearable=True,
                                               on_change=on_filter(name)).classes("w-64")
             await bills_table()
-            ui.separator()
-            await bill_detail()
 
         # ---------------- Extracted data tab ----------------
         with ui.tab_panel(t_data):
@@ -231,6 +269,11 @@ async def index():
                 cols = [{"name": k, "label": k.replace("_", " "), "field": k, "align": "left"} for k in rows[0] if k != "_k"]
                 ui.table(columns=cols, rows=rows, row_key="_k").classes("w-full").props("dense flat bordered")
 
+            ev_state = {"all_fields": False}
+
+            def note(text):
+                ui.label(text).classes("text-caption text-grey")
+
             @ui.refreshable
             async def evaluation():
                 try:
@@ -262,16 +305,44 @@ async def index():
                        {"metric": "Bill-level: all critical fields correct (%)", "value": a["bill_level_pct"]},
                        {"metric": "Arithmetic-consistent bills (%), of checkable", "value": a["arithmetic_consistent_pct"]},
                        {"metric": "Bills not arithmetic-checkable (missing values)", "value": a["arithmetic_not_checkable"]}])
+                note("Arithmetic-consistent: using only the extracted values, a bill passes if (1) present - previous reading = units, "
+                     "(2) units x rate = energy charges, (3) tax = 9% of fixed + energy + FPPCA, (4) the charges add up to current demand, "
+                     "(5) current demand + debit/credit + arrears = net payable. Bills with a missing or unparseable needed value "
+                     "are not checkable: they are left out of the percentage and counted in the row below it.")
                 table("Per-bill results", m["per_bill"])
                 table("Field mismatches: extractor vs ground truth (with judge verdict)", m["mismatches"])
-                table("Per-field exact match (%)", [{"field": LABELS[k], "match_pct": v} for k, v in a["per_field"].items()])
+                ranked = sorted(a["per_field"].items(), key=lambda kv: (kv[1] is None, kv[1] if kv[1] is not None else 0, KEYS.index(kv[0])))
+                shown = ranked if ev_state["all_fields"] else ranked[:10]
+                table("Per-field exact match: extractor vs ground truth (%), lowest first",
+                      [{"field": LABELS[k], "match_pct": v} for k, v in shown])
+                if len(ranked) > 10:
+                    def toggle():
+                        ev_state["all_fields"] = not ev_state["all_fields"]
+                        evaluation.refresh()
+                    ui.button(f"Show fewer fields" if ev_state["all_fields"] else f"Show all {len(ranked)} fields", on_click=toggle).props("flat dense no-caps size=sm")
                 j = m["judge_quality"]
-                table("LLM judge vs ground truth", [{"metric": k.replace("_", " "), "value": v} for k, v in j.items() if k != "disagreements"])
+                table("LLM judge: coverage", [{"metric": "fields judged", "value": j.get("fields_judged")},
+                                              {"metric": "bills judged", "value": j.get("bills_judged")},
+                                              {"metric": "agreement with ground truth (%)", "value": j.get("agreement_pct")},
+                                              {"metric": "fields without verdict", "value": j.get("fields_without_verdict")}])
+                note("Fields without verdict: the judge skipped the field or answered something other than correct/incorrect. "
+                     "It counts as a miss only when the extractor was actually wrong on that field.")
+                if j.get("matrix"):
+                    mx = j["matrix"]
+                    table("LLM judge vs ground truth: confusion matrix (fields)",
+                          [{"ground truth": "Extractor wrong", **{c.replace("_", " "): v for c, v in mx["extractor_wrong"].items()}},
+                           {"ground truth": "Extractor right", **{c.replace("_", " "): v for c, v in mx["extractor_right"].items()}}])
+                    table("LLM judge: precision and recall",
+                          [{"metric": "precision (%)", "value": j.get("precision_pct"), "meaning": "of fields the judge flagged, share that were really wrong"},
+                           {"metric": "recall (%)", "value": j.get("recall_pct"), "meaning": "of really wrong fields, share the judge flagged (no verdict counts as missed)"}])
                 table("Judge disagreements with ground truth", j.get("disagreements", []))
                 table("Usage (tokens)", [{"role": r, **u} for r, u in m["usage"].items()])
                 table("Latency (ms): provider response time of the final attempt, excluding pacing and retry waits",
                       [{"role": r, **v} for r, v in m["latency_ms"].items()])
                 table("Reliability", [{"role": r, **v} for r, v in m["reliability"].items()])
+                note("Noise level is assigned when each synthetic bill is generated (not detected from the image): "
+                     "clean = digital render with light grain; medium = slight skew, blur and shading; "
+                     "noisy = stronger skew, blur, shading, low contrast and heavy grain.")
                 bn = m["by_noise"]
                 pick = lambda keys: [{"noise": lv, **{k: v[k] for k in keys}} for lv, v in bn.items()]
                 table("By noise level: extraction accuracy", pick(["bills", "all_fields_pct", "critical_fields_pct", "bill_level_pct", "arithmetic_consistent_pct"]))
@@ -292,4 +363,3 @@ async def index():
             evaluation.refresh()
         elif name == "Bills":
             bills_table.refresh()
-            bill_detail.refresh()

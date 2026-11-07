@@ -2,7 +2,7 @@
 
 NiceGUI app that scans stored (synthetic) electricity bill images one at a time with Gemini, stores the
 extracted fields in Neon Postgres, and evaluates the extraction against ground truth and an LLM judge
-(Mistral). See `requirements.md` for the agreed spec.
+(Mistral). See `requirements.md` for the agreed spec and `ARCHITECTURE.md` for the design and call flow.
 
 ## Layout
 - `main.py` entry point; `app/ui.py` pages (Bills, Extracted data, Evaluation)

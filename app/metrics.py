@@ -84,7 +84,12 @@ def judge_quality(eval_rows):
     fn = len(wrong) - tp
     fp = sum(1 for r in judged if r["extractor_match"] and r["judge_verdict"] == "incorrect")
     scored = [r for r in judged if r["judge_agrees_with_truth"] is not None]
+    def n(wrong_flag, verdict):
+        return sum(1 for r in judged if (not r["extractor_match"]) == wrong_flag and r["judge_verdict"] == verdict)
+    matrix = {"extractor_wrong": {"judge_incorrect": n(True, "incorrect"), "judge_correct": n(True, "correct"), "no_verdict": n(True, "missing")},
+              "extractor_right": {"judge_incorrect": n(False, "incorrect"), "judge_correct": n(False, "correct"), "no_verdict": n(False, "missing")}}
     return {
+        "matrix": matrix,
         "fields_judged": len(judged), "bills_judged": len({r["bill_id"] for r in judged}),
         "fields_without_verdict": sum(1 for r in judged if r["judge_verdict"] == "missing"),
         "agreement_pct": pct(sum(1 for r in scored if r["judge_agrees_with_truth"]), len(scored)),

@@ -52,19 +52,24 @@ async def test_filters_cascade_in_ui(user: User):
 
 
 @pytest.mark.usefixtures("fresh_db")
-async def test_scan_button_event_scans_and_selects_bill(user: User):
+async def test_scan_fills_account_id_and_detail_rows(user: User):
     bill = db.bills()[0]
-    ex = FakeExtractor(); ex.bill_id = bill["bill_id"]
+    ex = FakeExtractor({"net_payable": 5.0}); ex.bill_id = bill["bill_id"]
     services.set_clients(ex, FakeJudge(bill["bill_id"]))
     await user.open("/")
-    await user.should_see("Select a bill")
-    table = [t for t in user.find(kind=ui.table).elements if "bill_id" in str(t.props.get("row-key"))][0]
-    emit(table, "scan", bill["bill_id"])
+    assert bills_table(user).columns[0]["name"] == "account_id"           # extreme left
+    row = lambda: next(r for r in bills_table(user).rows if r["bill_id"] == bill["bill_id"])
+    assert row()["account_id"] == "" and row()["detail"] == [] and row()["status"] == "Not scanned"
+    emit(bills_table(user), "scan", bill["bill_id"])
     await user.should_see("Scanned", retries=40)
     await asyncio.sleep(0.5)
-    assert [r["status"] for r in bills_table(user).rows if r["bill_id"] == bill["bill_id"]] == ["Scanned"]
+    r = row()
+    assert r["status"] == "Scanned" and r["account_id"] == db.get_truth(bill["bill_id"])["account_id"]
+    assert r["_open"] is True                                     # the scanned bill opens in place
+    by = {d["k"]: d for d in r["detail"]}
+    assert len(r["detail"]) == 33 and sum(d["p"] for d in r["detail"]) == 11
+    assert by["net_payable"]["m"] is False and by["net_payable"]["e"] == "5.0" and by["tax"]["m"] is True
     assert db.get_bill(bill["bill_id"])["scan_status"] == "scanned" and ex.calls == 1
-    await user.should_see("Net payable")          # detail panel shows extracted fields for the scanned bill
 
 
 @pytest.mark.usefixtures("fresh_db")
@@ -80,6 +85,9 @@ async def test_extracted_tab_and_evaluation_tab(user: User):
     await user.should_see("Extraction accuracy vs ground truth")
     await user.should_see("LLM judge vs ground truth")
     await user.should_see("By noise level")
+    await user.should_see("confusion matrix")
+    await user.should_see("extractor vs ground truth (%), lowest first")
+    await user.should_see("Show all 33 fields")
     await user.should_see("Per-bill results")
     await user.should_see("Field mismatches")
 

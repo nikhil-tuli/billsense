@@ -26,7 +26,9 @@ Separate repository from `doc-ocr-pipeline`. Scope: electricity bills only. A ch
 - Three cascading filters: **City**, **Owner**, **Property Name**. Choosing any one narrows the other two to matching values (e.g. choosing a city shows only that city's owners and properties). Any one of the three can be the starting filter.
 - Choosing a Property Name shows that property's bill list.
 - Each bill has a **Scan** button. Scanning runs extraction on the existing stored image. No new image is generated. Scanning is one bill at a time, from the UI.
-- Selecting a bill shows the stored bill image next to the extracted fields.
+- **Account ID** is the leftmost data column. It is blank until the bill is scanned, then shows the account ID read from the image.
+- **Bill period** always shows the billing period from master data, because it identifies the bill when a property has several periods.
+- Each row expands in place (like the Extracted Data tab). The stored bill image is on the left (click to enlarge); on the right is a field table with columns Field, Extracted, Ground truth, Match (tick/cross) and Judge verdict (once judged). By default the 11 primary fields are shown, with toggles for all 33 fields and for mismatches only. An unscanned bill shows the image and a "not scanned" note.
 - Re-scanning **overwrites** the earlier extraction. No history of extracted data is kept.
 
 ### 4.3 Extracted Data tab
@@ -47,6 +49,10 @@ Separate repository from `doc-ocr-pipeline`. Scope: electricity bills only. A ch
 - Shows Gemini extraction vs ground truth, and LLM-judge verdicts vs ground truth, per field and per bill.
 - Workflow: scan each bill on the Bills tab, then press Judge on the Evaluation tab for that bill. Both steps are one bill at a time; there is no bulk job.
 - Shows the metrics in section 7.
+- Per-field exact match is explicitly extractor vs ground truth. It lists the 10 lowest-matching fields by default, with an option to show all 33.
+- The judge result is shown as a confusion matrix (rows: extractor wrong / right; columns: judge incorrect / correct / no verdict), with precision and recall below it.
+- Short definitions are shown for arithmetic consistency, noise level and "fields without verdict".
+- The existing field-mismatch and judge-disagreement tables are kept as they are.
 
 ## 5. Technical requirements
 - **Database:** Neon Postgres is the only data store. Images are stored in Neon as `bytea` in their own table, and are never loaded for list views. No blob storage.
@@ -82,6 +88,7 @@ Note: extracted data is overwritten on re-scan, but `extraction_runs` stays appe
 - **Breakdown:** all of the above split by noise level.
 
 ## 8. Risks and open items
+- **Deferred: ground truth is not independent of the images.** Today the generator creates each bill's values first, writes them to the ground-truth JSON, and renders the image from the same values. That is acceptable for this synthetic 20-bill evaluation but does not scale or reflect real bills. Later options: human-verified labels on real bills, or a separately keyed ground-truth source. Revisit before any real-bill or larger-scale evaluation.
 - **Judge strength:** a judge weaker than the extractor may miss real errors. Large 4 is Mistral's largest current multimodal model, and it is a different model family from the extractor. Judge-vs-ground-truth agreement is therefore a required result, and we should be ready to swap the judge model.
 - **Free-tier terms:** limits are verified (section 5). A third-party tracker reports that Mistral free-plan data may be used for model improvement unless opted out; confirm in your Mistral account settings. Gemini free-tier content may be used to improve Google's products, so no real bills.
 - **Render/Neon cold starts:** verify current free-tier sleep behaviour against the latency requirement.

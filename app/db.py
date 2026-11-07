@@ -72,8 +72,10 @@ def properties():
 
 def bills():
     return q("""SELECT b.bill_id, b.account_id, b.bill_period_start, b.bill_period_end, b.scan_status,
-                       b.noise_level, p.property_name, p.city, o.name AS owner
+                       b.noise_level, p.property_name, p.city, o.name AS owner,
+                       e.account_id AS extracted_account_id
                 FROM bills b JOIN properties p USING (account_id) JOIN owners o USING (owner_id)
+                LEFT JOIN extractions e ON e.bill_id = b.bill_id
                 ORDER BY b.bill_id""")
 
 

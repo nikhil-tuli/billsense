@@ -108,3 +108,14 @@ def test_per_bill_mismatches_and_noise_split():
     assert pb["critical_correct"] == "1/2" and pb["extractor_latency_ms"] == 900
     bn = metrics.by_noise(ev, runs)
     assert bn["clean"]["bills"] == 1 and bn["clean"]["extractor_latency_avg_ms"] == 900 and bn["noisy"]["bills"] == 0
+
+
+def test_judge_confusion_matrix_counts_every_cell():
+    def r(match, verdict):
+        return {"bill_id": "b", "field": "f", "extractor_match": match, "judge_verdict": verdict,
+                "judge_agrees_with_truth": None, "truth": "1", "extracted": "1"}
+    rows = [r(False, "incorrect"), r(False, "incorrect"), r(False, "correct"), r(False, "missing"),
+            r(True, "incorrect"), r(True, "correct"), r(True, "correct"), r(True, "correct"), r(True, "missing")]
+    mx = metrics.judge_quality(rows)["matrix"]
+    assert mx["extractor_wrong"] == {"judge_incorrect": 2, "judge_correct": 1, "no_verdict": 1}
+    assert mx["extractor_right"] == {"judge_incorrect": 1, "judge_correct": 3, "no_verdict": 1}
