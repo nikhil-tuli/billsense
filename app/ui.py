@@ -48,7 +48,7 @@ def db_down_notice(refresh):
     ui.button("Retry", on_click=refresh).props("outline size=sm")
 
 
-@ui.page("/")
+@ui.page("/", response_timeout=30)
 async def index():
     s = get_settings()
     ui.page_title("Electricity bill extraction")
