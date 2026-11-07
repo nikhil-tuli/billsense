@@ -184,7 +184,8 @@ class MistralJudge:
 
     def run(self, image: bytes, extracted: dict, mime: str = "image/jpeg") -> CallResult:
         body = {
-            "model": self.s.mistral_model, "temperature": 0.0, "response_format": {"type": "json_object"},
+            #"model": self.s.mistral_model, "temperature": 0.0, "response_format": {"type": "json_object"},
+            "model": self.s.mistral_model, "temperature": 0.0, "top_p": 1, "response_format": {"type": "json_object"},
             "messages": [{"role": "user", "content": [
                 {"type": "text", "text": JUDGE_PROMPT + json.dumps(extracted, ensure_ascii=False)},
                 {"type": "image_url", "image_url": f"data:{mime};base64,{base64.b64encode(image).decode()}"}]}],
