@@ -62,7 +62,21 @@ def _retry_after(headers, default):
         return default
 
 
+def _content_text(content):
+    """Mistral may return a plain string or a list of content chunks (text, thinking, ...). Join the text chunks."""
+    if isinstance(content, list):
+        parts = []
+        for ch in content:
+            if isinstance(ch, str):
+                parts.append(ch)
+            elif isinstance(ch, dict) and ch.get("type", "text") == "text" and isinstance(ch.get("text"), str):
+                parts.append(ch["text"])
+        return "".join(parts)
+    return content if isinstance(content, str) else None
+
+
 def _parse_json(text):
+    text = _content_text(text)
     if text is None:
         return None
     t = text.strip()
@@ -71,9 +85,15 @@ def _parse_json(text):
         t = t[4:] if t.lower().startswith("json") else t
     try:
         v = json.loads(t)
-        return v if isinstance(v, dict) else None
     except ValueError:
-        return None
+        a, b = t.find("{"), t.rfind("}")           # JSON wrapped in prose
+        if a < 0 or b <= a:
+            return None
+        try:
+            v = json.loads(t[a:b + 1])
+        except ValueError:
+            return None
+    return v if isinstance(v, dict) else None
 
 
 class IntervalLimiter:
@@ -184,7 +204,6 @@ class MistralJudge:
 
     def run(self, image: bytes, extracted: dict, mime: str = "image/jpeg") -> CallResult:
         body = {
-            #"model": self.s.mistral_model, "temperature": 0.0, "response_format": {"type": "json_object"},
             "model": self.s.mistral_model, "temperature": 0.0, "top_p": 1, "response_format": {"type": "json_object"},
             "messages": [{"role": "user", "content": [
                 {"type": "text", "text": JUDGE_PROMPT + json.dumps(extracted, ensure_ascii=False)},
