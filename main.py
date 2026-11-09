@@ -12,7 +12,7 @@ async def startup():
     s = get_settings()
     if s.database_url and s.writes_enabled:
         await run.io_bound(db.init_schema)
-        await run.io_bound(seed.seed_if_empty)
+        await run.io_bound(seed.seed_missing)
     if s.database_url:
         try:                                                   # pre-load reads so the first visit is fast
             await run.io_bound(db.warm)

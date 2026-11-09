@@ -60,7 +60,7 @@ App URL: https://billsense-c76d.onrender.com/ (free tier: the first load after i
 
 ### Deploy on Render
 Create a Web Service from this repo (free plan). Set `APP_MODE=deployed`, `DATABASE_URL`, `GEMINI_API_KEY` and `MISTRAL_API_KEY`.
-On first start the schema is created and the 20 bills are loaded. `render.yaml` holds the defaults.
+On start the schema is created and any of the 100 bundled sample bills missing from the database are added (append-only: existing bills, scans and uploads are never changed). `render.yaml` holds the defaults.
 
 ### Tests
 ```

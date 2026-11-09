@@ -5,6 +5,9 @@ Writes, under --out:
   ground_truth/bill_NNN.json  exact printed values for every field
   seed.json                 owners, properties (1:1 account_id) and bill manifest
 Deterministic for a given --seed.
+
+Extension mode (--extend DIR): keeps the bills already in DIR untouched and appends bills 21 to 100
+(80 new properties, 28 clean / 28 medium / 24 noisy) using seed + 100, so bills 1 to 20 stay byte-identical.
 """
 import argparse, json, random
 from datetime import date, timedelta
@@ -39,20 +42,55 @@ PROPERTIES = [  # owner, property, city, area, pin prefix, rr prefix
     ("Priya Menon", "Anna Nagar West 15", "Chennai", "ANNA NAGAR", "6000", "CHE"),
 ]
 
+# ---- v0.2 extension: 80 more properties (owners and cities are dummy data) ----
+NEW_OWNERS = [  # 28 new owners; the 12 original owners also take a few of the new properties
+    "Rohan Mehta", "Divya Pillai", "Karthik Subramanian", "Pooja Desai", "Vikram Singh", "Sneha Joshi",
+    "Aditya Banerjee", "Ritu Agarwal", "Manish Gupta", "Shalini Chopra", "Nitin Patil", "Fatima Khan",
+    "Gaurav Bansal", "Anjali Bhatt", "Harish Chandran", "Meenal Shah", "Sandeep Yadav", "Tara Menon",
+    "Deepak Malhotra", "Uma Krishnan", "Rajesh Tiwari", "Isha Saxena", "Amit Trivedi", "Pallavi Ghosh",
+    "Yusuf Ansari", "Bhavna Solanki", "Tarun Mishra", "Komal Rathore"]
+CITY_AREAS = {  # city: (pin prefix, rr prefix, areas) ; number of new properties = len(areas)
+    "Bengaluru": ("5600", "BLR", ["MALLESWARAM", "BTM LAYOUT", "YELAHANKA", "ELECTRONIC CITY", "RAJAJINAGAR"]),
+    "Mumbai": ("4000", "MUM", ["BORIVALI", "GOREGAON", "DADAR", "CHEMBUR", "VILE PARLE", "MULUND"]),
+    "Chennai": ("6000", "CHE", ["VELACHERY", "MYLAPORE", "PORUR", "TAMBARAM", "NUNGAMBAKKAM", "GUINDY", "ADAMBAKKAM"]),
+    "Delhi": ("1100", "DEL", ["ROHINI", "SAKET", "LAJPAT NAGAR", "JANAKPURI", "MAYUR VIHAR", "PITAMPURA", "KAROL BAGH", "GREEN PARK"]),
+    "Hyderabad": ("5000", "HYD", ["KUKATPALLY", "MADHAPUR", "BANJARA HILLS", "SECUNDERABAD", "MANIKONDA", "UPPAL", "KONDAPUR", "AMEERPET"]),
+    "Pune": ("4110", "PUN", ["HINJEWADI", "KOTHRUD", "VIMAN NAGAR", "WAKAD", "AUNDH", "HADAPSAR", "KALYANI NAGAR", "PASHAN"]),
+    "Kolkata": ("7000", "KOL", ["NEW TOWN", "BEHALA", "GARIAHAT", "DUM DUM", "JADAVPUR", "HOWRAH", "BARANAGAR", "TOLLYGUNGE"]),
+    "Ahmedabad": ("3800", "AMD", ["SATELLITE", "BOPAL", "NARANPURA", "PRAHLAD NAGAR", "MANINAGAR", "VASTRAPUR", "CG ROAD", "GOTA", "THALTEJ", "CHANDKHEDA"]),
+    "Jaipur": ("3020", "JAI", ["MALVIYA NAGAR", "VAISHALI NAGAR", "C SCHEME", "MANSAROVAR", "JAGATPURA", "TONK ROAD", "BANI PARK", "RAJA PARK", "SODALA", "SITAPURA"]),
+    "Lucknow": ("2260", "LKO", ["GOMTI NAGAR", "ALIGANJ", "HAZRATGANJ", "INDIRA NAGAR", "MAHANAGAR", "JANKIPURAM", "ALAMBAGH", "RAJAJIPURAM", "CHINHAT", "KRISHNA NAGAR"]),
+}
+STYLES = ["Heights", "Residency", "Court", "Villa", "Towers", "Greens", "Apartments", "Enclave", "Nest", "Park View"]
+
+def new_properties():
+    """80 (owner, property, city, area, pin, rr) rows. Fixed assignment seed so the list never changes."""
+    r = random.Random(7)
+    slots = NEW_OWNERS * 2 + sorted({p[0] for p in PROPERTIES}) * 2     # 56 + 24 = 80 owner slots
+    r.shuffle(slots)
+    rows, k = [], 0
+    for city, (pin, rr, areas) in CITY_AREAS.items():
+        for area in areas:
+            name = f"{area.title()} {STYLES[k % len(STYLES)]} {r.randint(1, 30)}"
+            rows.append((slots[k], name, city, area, pin, rr)); k += 1
+    r.shuffle(rows)
+    return rows
+
 def fmt(d): return d.strftime("%d/%m/%Y")
 def m2(x): return f"{x:.2f}"
 
-def make_data(rng):
-    owners = sorted({p[0] for p in PROPERTIES})
+def make_data(rng, plist=None, first_id=1, months=(10,)):
+    plist = PROPERTIES if plist is None else plist
+    owners = sorted({p[0] for p in plist})
     props, bills = [], []
-    for i, (owner, name, city, area, pin, rrp) in enumerate(PROPERTIES, start=1):
+    for i, (owner, name, city, area, pin, rrp) in enumerate(plist, start=first_id):
         acc = f"10000{i:05d}"
         prop = dict(property_id=i, owner=owner, property_name=name, city=city,
                     account_id=acc, rr_number=f"{rrp}{rng.randint(10,99)}SMP{rng.randint(1000,9999)}",
                     address=f"NO {rng.randint(2,99)} {name.upper()}, {area}, {city.upper()} - {pin}{rng.randint(10,99)}",
                     tariff="LT1", sanctioned_kw=rng.choice([2, 3, 4, 5]), mr_code=str(rng.randint(10000000, 19999999)))
         props.append(prop)
-        start = date(2026, 10, rng.randint(1, 8))
+        start = date(2026, months[0] if len(months) == 1 else rng.choice(months), rng.randint(1, 8))
         reading = rng.randint(1000, 8000)
         for k in range(1):  # one bill per property
             end = start + timedelta(days=rng.randint(29, 31))
@@ -174,11 +212,38 @@ def add_noise(img, level, rng, nrng):
     out = out.filter(ImageFilter.GaussianBlur(0.7 if medium else 1.3))
     return out, (75 if medium else 45)
 
+def extend(base: Path, seed: int):
+    """Append bills 21..100 to an existing seed dir without touching bills 1..20."""
+    man = json.loads((base / "seed.json").read_text())
+    first = len(man["properties"]) + 1
+    assert first == 21 and len(man["bills"]) == 20, "extend expects the original 20-bill seed"
+    rng = random.Random(seed + 100); nrng = np.random.default_rng(seed + 100)
+    plist = new_properties()
+    owners, props, bills = make_data(rng, plist, first_id=first, months=(8, 9, 10))
+    rng.shuffle(bills)
+    levels = ["clean"] * 28 + ["medium"] * 28 + ["noisy"] * 24
+    rng.shuffle(levels)
+    for i, (b, lv) in enumerate(zip(bills, levels), start=len(man["bills"]) + 1):
+        name = f"bill_{i:03d}"
+        img, q = add_noise(render_clean(b["gt"]), lv, rng, nrng)
+        img.save(base / "bills" / f"{name}.jpg", quality=q)
+        (base / "ground_truth" / f"{name}.json").write_text(json.dumps(b["gt"], indent=2))
+        man["bills"].append(dict(bill_id=name, property_id=b["property_id"], account_id=b["gt"]["account_id"],
+                                 bill_period_start=b["gt"]["bill_period_start"], noise_level=lv,
+                                 image=f"bills/{name}.jpg", ground_truth=f"ground_truth/{name}.json"))
+    man["properties"] += props
+    man["owners"] = sorted(set(man["owners"]) | set(owners))
+    (base / "seed.json").write_text(json.dumps(man, indent=2))
+    print(f"extended to {len(man['bills'])} bills, {len(man['owners'])} owners")
+
 def main():
     ap = argparse.ArgumentParser()
+    ap.add_argument("--extend", help="seed dir to extend from 20 to 100 bills (keeps bills 1-20 untouched)")
     ap.add_argument("--out", default="out"); ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--count", type=int, default=20)
     a = ap.parse_args()
+    if a.extend:
+        return extend(Path(a.extend), a.seed)
     rng = random.Random(a.seed); nrng = np.random.default_rng(a.seed)
     owners, props, bills = make_data(rng)
     rng.shuffle(bills); bills = bills[:a.count]

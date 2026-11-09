@@ -66,7 +66,7 @@ def fresh_db(monkeypatch):
     db.close_pool()
     db.init_schema()
     from app import seed
-    assert seed.seed_if_empty() is True
+    assert seed.seed_missing() == 100
     yield
     services.set_clients(None, None)
     db.close_pool()

@@ -6,17 +6,18 @@ from tests.conftest import FakeExtractor, FakeJudge
 
 
 def test_seed_loaded_once(fresh_db):
-    assert len(db.properties()) == 20 and len(db.bills()) == 20
-    assert len({p["owner"] for p in db.properties()}) == 12
+    assert len(db.properties()) == 100 and len(db.bills()) == 100
+    assert len({p["owner"] for p in db.properties()}) == 40
+    assert len({p["city"] for p in db.properties()}) == 10
     from collections import Counter
-    assert Counter(b["noise_level"] for b in db.bills()) == {"clean": 7, "medium": 7, "noisy": 6}
-    assert db.one("SELECT count(*) AS n FROM bill_images")["n"] == 20
-    assert db.one("SELECT count(*) AS n FROM ground_truth")["n"] == 20
-    assert seed.seed_if_empty() is False                        # idempotent
+    assert Counter(b["noise_level"] for b in db.bills()) == {"clean": 35, "medium": 35, "noisy": 30}
+    assert db.one("SELECT count(*) AS n FROM bill_images")["n"] == 100
+    assert db.one("SELECT count(*) AS n FROM ground_truth")["n"] == 100
+    assert seed.seed_missing() == 0                              # idempotent
 
 
 def test_one_bill_per_property_and_unique_account(fresh_db):
-    assert db.one("SELECT count(DISTINCT account_id) AS n FROM bills")["n"] == 20
+    assert db.one("SELECT count(DISTINCT account_id) AS n FROM bills")["n"] == 100
     with pytest.raises(Exception):
         db.q("INSERT INTO bills (bill_id, account_id, bill_period_start, bill_period_end) "
              "SELECT 'dup', account_id, bill_period_start, bill_period_end FROM bills LIMIT 1")
@@ -90,7 +91,7 @@ def test_read_only_mode_blocks_writes(fresh_db, monkeypatch):
     with pytest.raises(services.ReadOnlyError):
         services.judge_bill("bill_001")
     assert ex.calls == 0 and db.get_extraction("bill_001") is None
-    assert seed.seed_if_empty() is False
+    assert seed.seed_missing() == 0
 
 
 def test_db_layer_refuses_writes_in_read_only_mode(fresh_db, monkeypatch):
@@ -185,3 +186,28 @@ def test_cache_is_cleared_by_writes_and_csv_export_has_all_fields(fresh_db):
     d = dict(zip(out[0], out[1]))
     assert d["Net payable"] == "5" and d["Property name"] and d["City"] and d["Owner"]
     assert d["Account ID"] == db.get_truth("bill_001")["account_id"]
+
+
+def test_top_up_appends_without_touching_existing_data(fresh_db):
+    # simulate the live DB: only the first 20 bills, one already scanned, plus an upload property
+    with db.tx() as c:
+        c.execute("DELETE FROM bills WHERE bill_id > 'bill_020' AND bill_id LIKE 'bill_%'")
+        c.execute("DELETE FROM properties WHERE property_id > 20")
+        c.execute("DELETE FROM owners WHERE owner_id NOT IN (SELECT owner_id FROM properties)")
+        o = c.execute("INSERT INTO owners (name) VALUES ('Upload Owner') RETURNING owner_id").fetchone()
+        c.execute("INSERT INTO properties (property_id, owner_id, account_id, property_name, city) "
+                  "VALUES (21, %s, 'UPL-21', 'My Flat', 'Pune')", (o["owner_id"],))
+    db.clear_cache()
+    ex = FakeExtractor(); ex.bill_id = "bill_001"
+    services.set_clients(ex, FakeJudge("bill_001"))
+    services.scan_bill("bill_001")
+    before = db.one("SELECT count(*) AS n FROM extraction_runs")["n"]
+    assert db.one("SELECT count(*) AS n FROM bills")["n"] == 20
+    assert seed.seed_missing() == 80
+    assert len(db.bills()) == 100 and len(db.properties()) == 101         # 100 sample + 1 upload property
+    assert db.one("SELECT scan_status FROM bills WHERE bill_id='bill_001'")["scan_status"] != "not_scanned"
+    assert db.one("SELECT count(*) AS n FROM extraction_runs")["n"] == before
+    assert db.one("SELECT account_id FROM properties WHERE property_id=21")["account_id"] == "UPL-21"
+    assert db.one("SELECT count(*) AS n FROM bills WHERE scan_status='not_scanned'")["n"] == 99
+    assert len({r["property_id"] for r in db.q("SELECT property_id FROM properties")}) == 101   # no id clash
+    assert seed.seed_missing() == 0                                       # idempotent

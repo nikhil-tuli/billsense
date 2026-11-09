@@ -148,3 +148,13 @@ def test_mistral_retries_5xx_transport_and_tolerates_http_date_retry_after():
     j, _ = judge_with(lambda req: httpx.Response(503))
     r = j.run(b"i", {})
     assert r.status == "error" and r.retries == 3                      # exhausted 5xx is an error, not rate_limited
+
+
+def test_mistral_accepts_chunked_content_and_prose_wrapped_json():
+    chunks = [{"type": "thinking", "thinking": [{"type": "text", "text": "hmm"}]},
+              {"type": "text", "text": 'Here you go:\n```json\n{"verdicts": {"tax": "correct"}}\n```'}]
+    j, _ = judge_with(lambda req: httpx.Response(200, json=ok_body(chunks)))
+    r = j.run(b"i", {"tax": 1.0})
+    assert r.status == "ok" and r.data["verdicts"] == {"tax": "correct"}
+    j, _ = judge_with(lambda req: httpx.Response(200, json=ok_body(["nonsense"])))
+    assert j.run(b"i", {}).status == "invalid_json"             # still a clean failure, not a crash

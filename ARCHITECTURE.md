@@ -42,7 +42,7 @@ Components
 - **Compare and metrics:** field normalisation and exact-match, arithmetic consistency, accuracy, judge quality, usage, latency, reliability, noise split.
 - **API clients:** Gemini (structured output) and Mistral (JSON mode), with request pacing and retry/backoff on 429, 5xx and network errors.
 - **DB layer:** connection pool (one warm connection) for the Neon pooled endpoint, plus an in-memory read cache cleared on every write. All writes are refused unless `APP_MODE=deployed`.
-- **Seeding:** on first deploy start, creates the schema and loads the 20 synthetic bills and ground truth if the database is empty.
+- **Seeding:** on each deploy start, creates the schema and tops up the 100 synthetic bills (40 owners, 10 cities) with ground truth. Append-only: only missing bills are inserted, nothing is updated or deleted. Property ids are allocated at insert time (uploads also use max+1), so they never clash.
 
 ## 2. Call flow
 
@@ -128,3 +128,4 @@ Notes
 | 2026-11-07 | Main page `response_timeout` raised from 3s to 30s: the first page build runs several Neon queries (cold start on free tiers) and was returning HTTP 500. |
 | 2026-11-09 | Bills tab: "Bill reading period" column (month-year of extracted period end, blank until scanned) with period and scan-status filters joined to the cascade. Extracted data tab: expand removed, all 33 columns with column chooser, value filter, CSV download of selected rows (new `app/export.py`). Evaluation: info icons. New Field guide tab (`MEANINGS` in `app/fields.py`). Speed: DB read cache invalidated on writes, lean extracted-rows query, pool min_size 1, startup cache warm, lazy tab build, slow-query logging. No new external components. |
 | 2026-11-09 | Upload tab built. New `app/uploads.py` (content check, PDF page 1 render, resolution and blur gate), `uploads` table, `bills.source`. New dependencies: Pillow, numpy, PyMuPDF. Upload makes no model call; Scan and Judge unchanged. Evaluation gets a judge-only section for uploaded bills. |
+| 2026-11-09 | Sample data scaled from 20 to 100 bills (requirements 3a). `generate_bills.py --extend` appends bills 21 to 100 (bills 1 to 20 unchanged). `app/seed.py`: `seed_if_empty` replaced by append-only `seed_missing`. No schema change, no new components. |

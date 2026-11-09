@@ -34,25 +34,29 @@ def emit(element, event_type, args):
 async def test_filters_cascade_in_ui(user: User):
     services.set_clients(FakeExtractor(), FakeJudge())
     await user.open("/")
-    assert len(names(user)) == 20 and "Lakeview Apartments 4B" in names(user)
+    props = db.properties()
+    assert len(names(user)) == 100 and "Lakeview Apartments 4B" in names(user)
     s = selects(user)
+    mumbai = sorted(p["property_name"] for p in props if p["city"] == "Mumbai")
     s["City"].set_value("Mumbai")
     await asyncio.sleep(0.5)
-    assert names(user) == ["Andheri Nest", "Bandra Pearl 14", "Powai Lake View 7", "Seaside Heights 12"]
-    assert set(s["Owner"].options) == {"Ravi Kumar", "Farhan Sheikh", "Imran Qureshi", "Arjun Reddy"}
+    assert sorted(names(user)) == mumbai and len(mumbai) == 10
+    assert set(s["Owner"].options) == {p["owner"] for p in props if p["city"] == "Mumbai"}
+    ravi_mumbai = sorted(p["property_name"] for p in props if p["city"] == "Mumbai" and p["owner"] == "Ravi Kumar")
     s["Owner"].set_value("Ravi Kumar")
     await asyncio.sleep(0.5)
-    assert s["Property name"].options == ["Seaside Heights 12"] and names(user) == ["Seaside Heights 12"]
+    assert sorted(s["Property name"].options) == ravi_mumbai and sorted(names(user)) == ravi_mumbai
     s["Owner"].set_value(None)                      # clearing Owner re-widens the other two
     await asyncio.sleep(0.5)
-    assert len(s["Property name"].options) == 4
+    assert len(s["Property name"].options) == 10
     s["City"].set_value(None)
     await asyncio.sleep(0.5)
-    assert len(names(user)) == 20 and len(s["City"].options) == 7
-    # start from Owner instead: Ravi Kumar owns properties in Bengaluru and Mumbai
+    assert len(names(user)) == 100 and len(s["City"].options) == 10
+    # start from Owner instead: Ravi Kumar owns properties in several cities
+    ravi = [p for p in props if p["owner"] == "Ravi Kumar"]
     s["Owner"].set_value("Ravi Kumar")
     await asyncio.sleep(0.5)
-    assert s["City"].options == ["Bengaluru", "Mumbai"] and names(user) == ["Lakeview Apartments 4B", "Seaside Heights 12"]
+    assert s["City"].options == sorted({p["city"] for p in ravi}) and sorted(names(user)) == sorted(p["property_name"] for p in ravi)
 
 
 @pytest.mark.usefixtures("fresh_db")
