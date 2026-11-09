@@ -1,4 +1,7 @@
 """Neon Postgres access (psycopg 3, small pool). Keep image bytes out of list queries."""
+import logging
+import threading
+import time
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
@@ -10,7 +13,31 @@ from psycopg_pool import ConnectionPool
 from app.config import ReadOnlyError, get_settings
 from app.fields import PRIMARY
 
+log = logging.getLogger("billsense.db")
 _pool = None
+
+# Read cache: the app has one instance and all writes go through this module, so cached reads are
+# cleared on every write. The TTL is only a safety net for edits made directly in Neon.
+CACHE_TTL_S = 120
+_cache: dict = {}
+_cache_lock = threading.Lock()
+
+
+def cached(key, fn):
+    now = time.monotonic()
+    with _cache_lock:
+        hit = _cache.get(key)
+    if hit and now - hit[0] < CACHE_TTL_S:
+        return hit[1]
+    value = fn()
+    with _cache_lock:
+        _cache[key] = (time.monotonic(), value)
+    return value
+
+
+def clear_cache():
+    with _cache_lock:
+        _cache.clear()
 
 
 def _require_writes():
@@ -26,7 +53,7 @@ def pool() -> ConnectionPool:
         if not url:
             raise RuntimeError("DATABASE_URL is not set")
         _pool = ConnectionPool(
-            conninfo=url, min_size=0, max_size=4, timeout=30, open=True,
+            conninfo=url, min_size=1, max_size=4, timeout=30, open=True,
             kwargs={"row_factory": dict_row, "autocommit": True, "prepare_threshold": None, "connect_timeout": 15},
             check=ConnectionPool.check_connection,   # recovers connections dropped by Neon auto-suspend
         )
@@ -35,14 +62,20 @@ def pool() -> ConnectionPool:
 
 def close_pool():
     global _pool
+    clear_cache()
     if _pool is not None:
         _pool.close()
         _pool = None
 
 
 def q(sql, params=None):
+    t0 = time.monotonic()
     with pool().connection() as c:
-        return c.execute(sql, params).fetchall()
+        rows = c.execute(sql, params).fetchall()
+    dt = time.monotonic() - t0
+    if dt > 0.5:
+        log.warning("slow query %.2fs: %s", dt, " ".join(str(sql).split())[:90])
+    return rows
 
 
 def one(sql, params=None):
@@ -52,9 +85,12 @@ def one(sql, params=None):
 
 @contextmanager
 def tx():
-    with pool().connection() as c:
-        with c.transaction():
-            yield c
+    try:
+        with pool().connection() as c:
+            with c.transaction():
+                yield c
+    finally:
+        clear_cache()
 
 
 def init_schema():
@@ -62,18 +98,27 @@ def init_schema():
     sql = (Path(__file__).parent / "schema.sql").read_text()
     with pool().connection() as c:
         c.execute(sql)
+    clear_cache()
 
 
 # ---- reads (no image bytes) -------------------------------------------------
 def properties():
+    return cached("properties", _properties)
+
+
+def _properties():
     return q("""SELECT p.property_id, p.property_name, p.city, p.account_id, p.rr_number, o.name AS owner
                 FROM properties p JOIN owners o USING (owner_id) ORDER BY p.city, o.name, p.property_name""")
 
 
 def bills():
+    return cached("bills", _bills)
+
+
+def _bills():
     return q("""SELECT b.bill_id, b.account_id, b.bill_period_start, b.bill_period_end, b.scan_status,
                        b.noise_level, p.property_name, p.city, o.name AS owner,
-                       e.account_id AS extracted_account_id
+                       e.account_id AS extracted_account_id, e.bill_period_end AS extracted_period_end
                 FROM bills b JOIN properties p USING (account_id) JOIN owners o USING (owner_id)
                 LEFT JOIN extractions e ON e.bill_id = b.bill_id
                 ORDER BY b.bill_id""")
@@ -100,7 +145,13 @@ def extraction_fields(row) -> dict:
 
 
 def extracted_rows():
-    return q("""SELECT b.bill_id, b.noise_level, p.property_name, p.city, o.name AS owner, e.*
+    return cached("extracted_rows", _extracted_rows)
+
+
+def _extracted_rows():
+    cols = ", ".join(f"e.{k}" for k in PRIMARY)            # raw_json is large and not needed for lists
+    return q(f"""SELECT b.bill_id, b.noise_level, p.property_name, p.city, o.name AS owner, {cols},
+                       e.secondary_fields, e.model, e.extracted_at
                 FROM extractions e JOIN bills b ON b.bill_id = e.bill_id JOIN properties p ON p.account_id = b.account_id
                 JOIN owners o ON o.owner_id = p.owner_id ORDER BY b.bill_id""")
 
@@ -115,10 +166,18 @@ def get_truth(bill_id):
 
 
 def all_runs():
+    return cached("all_runs", _all_runs)
+
+
+def _all_runs():
     return q("""SELECT r.*, b.noise_level FROM extraction_runs r JOIN bills b USING (bill_id) ORDER BY run_id""")
 
 
 def all_eval():
+    return cached("all_eval", _all_eval)
+
+
+def _all_eval():
     return q("""SELECT e.*, b.noise_level FROM eval_results e JOIN bills b USING (bill_id)
                 ORDER BY e.bill_id, e.field""")
 
@@ -128,7 +187,14 @@ def eval_for(bill_id):
 
 
 def judged_bills():
-    return {r["bill_id"] for r in q("SELECT DISTINCT bill_id FROM eval_results WHERE judge_verdict IS NOT NULL")}
+    return cached("judged_bills", lambda: {r["bill_id"] for r in q(
+        "SELECT DISTINCT bill_id FROM eval_results WHERE judge_verdict IS NOT NULL")})
+
+
+def warm():
+    """Pre-load the cached reads (also opens the first connection) so the first page view is fast."""
+    for fn in (properties, bills, extracted_rows, all_runs, all_eval, judged_bills):
+        fn()
 
 
 # ---- writes ------------------------------------------------------------------
@@ -137,6 +203,7 @@ def log_run(bill_id, role, model, res):
     q("""INSERT INTO extraction_runs (bill_id, role, model, input_tokens, output_tokens, latency_ms, status, error, retries)
          VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING run_id""",
       (bill_id, role, model, res.input_tokens, res.output_tokens, res.latency_ms, res.status, res.error, res.retries))
+    clear_cache()
 
 
 def save_extraction(bill_id, fields: dict, model: str, eval_rows: list[dict]):

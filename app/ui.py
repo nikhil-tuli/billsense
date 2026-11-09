@@ -1,12 +1,27 @@
-"""NiceGUI pages: Bills, Extracted data, Evaluation."""
+"""NiceGUI pages: Bills, Extracted data, Evaluation, Field guide."""
+import logging
+import time
+
 from fastapi import Response
 from nicegui import app as nicegui_app, run, ui
 
-from app import cascade, db, metrics, services
+from app import cascade, db, export, metrics, services
 from app.config import get_settings
-from app.fields import KEYS, LABELS, PRIMARY, SECONDARY
+from app.fields import KEYS, LABELS, MEANINGS, PRIMARY
 
-PRIMARY_COLS = [{"name": k, "label": LABELS[k], "field": k, "align": "left"} for k in PRIMARY]
+log = logging.getLogger("billsense.ui")
+IDENT_COLS = {"city": "City", "owner": "Owner", "property_name": "Property name"}
+CRITICAL_LIST = ", ".join(LABELS[k] for k in PRIMARY)
+INFO = {
+    "Critical fields match (%)": f"Share of the {len(PRIMARY)} critical fields that match ground truth: {CRITICAL_LIST}.",
+    "Arithmetic-consistent bills (%), of checkable":
+        "A bill passes if all 5 checks hold on the extracted values: (1) present - previous reading = units; "
+        "(2) units x rate = energy charges; (3) tax = 9% of fixed + energy + FPPCA; (4) charges add up to current demand; "
+        "(5) current demand + debit/credit + arrears = net payable. Bills missing a needed value are not checkable "
+        "and are left out of the percentage.",
+    "fields without verdict": "The judge skipped the field or answered something other than correct/incorrect. "
+                              "Counts as a miss only if the extractor was actually wrong on that field.",
+}
 
 
 @nicegui_app.get("/bill_image/{bill_id}")
@@ -37,10 +52,34 @@ class DbDown(Exception):
 
 
 async def _load(fn, *a):
+    t0 = time.monotonic()
     try:
         return await run.io_bound(fn, *a)
     except Exception as e:                                   # noqa: BLE001 - Neon waking up, network, etc.
         raise DbDown(str(e)) from e
+    finally:
+        dt = time.monotonic() - t0
+        if dt > 0.5:
+            log.warning("slow load %.2fs: %s", dt, getattr(fn, "__name__", "?"))
+
+
+def _bill_rows():
+    """Bills joined with what the Bills tab needs: scan label and bill reading period (month-year of the
+    extracted bill period end; blank until the bill is scanned)."""
+    out = []
+    for b in db.bills():
+        scanned = b["scan_status"] == "scanned"
+        out.append({**b, "scanned": scanned, "scan_label": "Scanned" if scanned else "Not scanned",
+                    "reading_period": cascade.month_year(b["extracted_period_end"]) if scanned else ""})
+    return out
+
+
+def _eval_inputs():
+    return db.all_runs(), db.all_eval(), db.extracted_rows(), db.judged_bills()
+
+
+def _bills_and_eval():
+    return _bill_rows(), db.all_eval()
 
 
 def db_down_notice(refresh):
@@ -61,16 +100,17 @@ async def index():
         return
 
     try:
-        props = await _load(db.properties)
+        all_rows = await _load(_bill_rows)
     except DbDown:
         db_down_notice(lambda: ui.navigate.reload())
         return
-    state = {"city": None, "owner": None, "property": None, "open": set()}
+    state = {**{n: None for n in cascade.COLS}, "open": set()}
 
     with ui.tabs().classes("w-full") as tabs:
         t_bills = ui.tab("Bills")
         t_data = ui.tab("Extracted data")
         t_eval = ui.tab("Evaluation")
+        t_guide = ui.tab("Field guide")
 
     # ---------------- Bills tab ----------------
     def _detail(bid, ev_rows):
@@ -92,7 +132,7 @@ async def index():
     @ui.refreshable
     async def bills_table():
         try:
-            all_bills, ev = await _load(lambda: (db.bills(), db.all_eval()))
+            all_bills, ev = await _load(_bills_and_eval)
         except DbDown:
             return db_down_notice(bills_table.refresh)
         ev_by_bill = {}
@@ -103,15 +143,15 @@ async def index():
             scanned = b["scan_status"] == "scanned"
             rows.append({"bill_id": b["bill_id"], "account_id": (b["extracted_account_id"] or "") if scanned else "",
                          "property": b["property_name"], "city": b["city"], "owner": b["owner"],
-                         "period": f'{b["bill_period_start"]:%d/%m/%Y} - {b["bill_period_end"]:%d/%m/%Y}',
-                         "status": "Scanned" if scanned else "Not scanned", "scanned": scanned, "noise": b["noise_level"],
+                         "period": b["reading_period"],
+                         "status": b["scan_label"], "scanned": scanned, "noise": b["noise_level"],
                          "detail": _detail(b["bill_id"], ev_by_bill.get(b["bill_id"], [])) if scanned else [],
                          "_open": b["bill_id"] in state["open"], "_all": False, "_mm": False, "_zoom": False})
         cols = [{"name": "account_id", "label": "Account ID", "field": "account_id", "align": "left"},
                 {"name": "property", "label": "Property", "field": "property", "align": "left"},
                 {"name": "city", "label": "City", "field": "city", "align": "left"},
                 {"name": "owner", "label": "Owner", "field": "owner", "align": "left"},
-                {"name": "period", "label": "Bill period", "field": "period", "align": "left"},
+                {"name": "period", "label": "Bill reading period", "field": "period", "align": "left"},
                 {"name": "status", "label": "Status", "field": "status", "align": "left"},
                 {"name": "action", "label": "", "field": "action"}]
         t = ui.table(columns=cols, rows=rows, row_key="bill_id").classes("w-full")
@@ -184,69 +224,131 @@ async def index():
         n.dismiss()
         ui.notify(res["message"], type="positive" if res["ok"] else "negative")
         state["open"].add(bid)
+        try:
+            rows = await _load(_bill_rows)
+            state.update(cascade.normalise(rows, state))
+            sync_selects(rows)                                  # a new scan can add a reading-period option
+        except DbDown:
+            pass
         bills_table.refresh()
 
+    def sync_selects(rows):
+        opts = cascade.options(rows, state)
+        for n, sel in selects.items():
+            sel.options = opts[n]
+            sel.value = state[n]
+            sel.update()
+
     def on_filter(name):
-        def handler(e):
+        async def handler(e):
+            if e.value == state[name]:                          # programmatic sync, nothing changed
+                return
             state[name] = e.value
-            state.update(cascade.normalise(props, {k: state[k] for k in ("city", "owner", "property")}, keep=name))
-            opts = cascade.options(props, state)
-            for n, sel in selects.items():
-                sel.options = opts[n]
-                sel.value = state[n]
-                sel.update()
+            try:
+                rows = await _load(_bill_rows)
+            except DbDown:
+                return
+            state.update(cascade.normalise(rows, state, keep=name))
+            sync_selects(rows)
             bills_table.refresh()
         return handler
 
     selects = {}
+    lazy = {}                                                    # tab name -> (container, refreshable or builder)
+    built = set()
     with ui.tab_panels(tabs, value=t_bills, on_change=lambda e: on_tab(e.value)).classes("w-full") as panels:
         with ui.tab_panel(t_bills):
-            opts = cascade.options(props, state)
+            opts = cascade.options(all_rows, state)
             with ui.row().classes("w-full gap-4"):
-                for name, label in (("city", "City"), ("owner", "Owner"), ("property", "Property name")):
+                for name, label in (("city", "City"), ("owner", "Owner"), ("property", "Property name"),
+                                    ("period", "Bill reading period"), ("status", "Scan status")):
                     selects[name] = ui.select(opts[name], label=label, value=None, clearable=True,
-                                              on_change=on_filter(name)).classes("w-64")
+                                              on_change=on_filter(name)).classes("w-56")
             await bills_table()
 
-        # ---------------- Extracted data tab ----------------
+        # ---------------- Extracted data tab (built on first open) ----------------
         with ui.tab_panel(t_data):
+            data_box = ui.column().classes("w-full")
+            data_state = {"filters": [], "cols": list(PRIMARY)}
+
             @ui.refreshable
             async def data_table():
                 try:
                     rows_db = await _load(db.extracted_rows)
                 except DbDown:
                     return db_down_notice(data_table.refresh)
-                rows = []
-                for r in rows_db:
-                    f = db.extraction_fields(r)
-                    row = {"bill_id": r["bill_id"], "city": r["city"], "owner": r["owner"],
-                           "property_name": r["property_name"]}
-                    row.update({k: _fmt(f.get(k)) for k in PRIMARY})
-                    row["secondary"] = _kv(f, SECONDARY)
-                    rows.append(row)
-                cols = ([{"name": "city", "label": "City", "field": "city", "align": "left"},
-                         {"name": "owner", "label": "Owner", "field": "owner", "align": "left"},
-                         {"name": "property_name", "label": "Property name", "field": "property_name", "align": "left"}]
-                        + PRIMARY_COLS)
-                if not rows:
+                if not rows_db:
                     ui.label("No bills have been scanned yet.").classes("text-grey")
                     return
-                t = ui.table(columns=cols, rows=rows, row_key="bill_id").classes("w-full")
-                t.add_slot("header", """<q-tr :props="props"><q-th auto-width />
-                    <q-th v-for="col in props.cols" :key="col.name" :props="props">{{ col.label }}</q-th></q-tr>""")
-                t.add_slot("body", """<q-tr :props="props"><q-td auto-width>
-                      <q-btn size="sm" flat round dense @click="props.expand = !props.expand"
-                             :icon="props.expand ? 'remove' : 'add'" /></q-td>
-                    <q-td v-for="col in props.cols" :key="col.name" :props="props">{{ col.value }}</q-td></q-tr>
-                    <q-tr v-if="props.expand" :props="props"><q-td colspan="100%">
-                      <div class="row q-gutter-md no-wrap">
-                        <img :src="'/bill_image/' + props.row.bill_id" style="max-width:320px" />
-                        <div><div v-for="kv in props.row.secondary" :key="kv[0]">{{ kv[0] }}: <b>{{ kv[1] }}</b></div></div>
-                      </div></q-td></q-tr>""")
-            await data_table()
+                all_data = []
+                for r in rows_db:
+                    f = db.extraction_fields(r)
+                    row = {"bill_id": r["bill_id"], "city": r["city"], "owner": r["owner"], "property_name": r["property_name"]}
+                    row.update({k: _fmt(f.get(k)) for k in KEYS})
+                    all_data.append(row)
+                names = {**IDENT_COLS, **LABELS}
+                rows = [r for r in all_data
+                        if all(txt.lower() in str(r[k]).lower() for k, txt in data_state["filters"])]
+                holder = {}
+
+                # --- filter bar: keep rows whose field value contains the text
+                with ui.row().classes("items-end gap-2"):
+                    fsel = ui.select(names, label="Filter field", value="account_id").classes("w-48")
+                    ftxt = ui.input("contains").classes("w-48")
+
+                    def add_filter():
+                        if ftxt.value and ftxt.value.strip():
+                            data_state["filters"].append((fsel.value, ftxt.value.strip()))
+                            data_table.refresh()
+                    ui.button("Add filter", on_click=add_filter).props("outline no-caps size=sm")
+                    for i, (k, txt) in enumerate(data_state["filters"]):
+                        def remove(e, i=i):
+                            if not e.value:
+                                data_state["filters"].pop(i)
+                                data_table.refresh()
+                        ui.chip(f"{names[k]} contains '{txt}'", removable=True, on_value_change=remove)
+
+                # --- column chooser + CSV download
+                def shown():
+                    chosen = set(data_state["cols"])
+                    return list(IDENT_COLS) + [k for k in KEYS if k in chosen]
+
+                def on_cols(e):
+                    data_state["cols"] = list(e.value or [])
+                    holder["t"]._props["visible-columns"] = shown()
+                    holder["t"].update()
+
+                def on_select():
+                    n = len(holder["t"].selected)
+                    btn.set_text(f"Download CSV ({n} selected)")
+                    btn.set_enabled(n > 0)
+
+                def download():
+                    ids = [r["bill_id"] for r in holder["t"].selected]
+                    ui.download.content(export.extracted_csv(rows_db, ids), "billsense_extracted.csv", "text/csv")
+
+                with ui.row().classes("items-center gap-4"):
+                    ui.select({k: LABELS[k] for k in KEYS}, multiple=True, value=data_state["cols"], label="Columns",
+                              on_change=on_cols).props("use-chips dense").classes("w-96")
+                    btn = ui.button("Download CSV (0 selected)", on_click=download).props("outline no-caps size=sm")
+                    btn.set_enabled(False)
+                ui.label(f"{len(rows)} of {len(all_data)} bills. Tick rows (or the header box for all) to download them as CSV "
+                         "with all 33 fields.").classes("text-caption text-grey")
+
+                cols = ([{"name": k, "label": lbl, "field": k, "align": "left"} for k, lbl in IDENT_COLS.items()]
+                        + [{"name": k, "label": LABELS[k], "field": k, "align": "left"} for k in KEYS])
+                t = ui.table(columns=cols, rows=rows, row_key="bill_id", selection="multiple",
+                             on_select=on_select).classes("w-full").props("dense")
+                t._props["visible-columns"] = shown()
+                holder["t"] = t
+                if not rows:
+                    ui.label("No scanned bills match the filters.").classes("text-grey")
+            lazy["Extracted data"] = (data_box, data_table)
 
         # ---------------- Evaluation tab ----------------
         with ui.tab_panel(t_eval):
+            eval_box = ui.column().classes("w-full")
+
             async def do_judge(bid):
                 if not s.writes_enabled:
                     ui.notify("Read-only mode: judging only works in the deployed app.", type="warning")
@@ -265,9 +367,14 @@ async def index():
                 if not rows:
                     ui.label("Nothing to show yet.").classes("text-grey")
                     return
-                rows = [{**r, "_k": i} for i, r in enumerate(rows)]          # unique row key for Quasar
-                cols = [{"name": k, "label": k.replace("_", " "), "field": k, "align": "left"} for k in rows[0] if k != "_k"]
-                ui.table(columns=cols, rows=rows, row_key="_k").classes("w-full").props("dense flat bordered")
+                # a row whose "metric" has an entry in INFO gets an (i) icon with a tooltip
+                rows = [{**r, "_k": i, "_info": INFO.get(r.get("metric"), "")} for i, r in enumerate(rows)]
+                cols = [{"name": k, "label": k.replace("_", " "), "field": k, "align": "left"} for k in rows[0] if not k.startswith("_")]
+                t = ui.table(columns=cols, rows=rows, row_key="_k").classes("w-full").props("dense flat bordered")
+                if any(r["_info"] for r in rows) and "metric" in rows[0]:
+                    t.add_slot("body-cell-metric", """<q-td :props="props">{{ props.value }}
+                        <q-icon v-if="props.row._info" name="info" size="xs" color="grey-7" class="q-ml-xs">
+                        <q-tooltip max-width="340px" class="text-body2">{{ props.row._info }}</q-tooltip></q-icon></q-td>""")
 
             ev_state = {"all_fields": False}
 
@@ -277,7 +384,7 @@ async def index():
             @ui.refreshable
             async def evaluation():
                 try:
-                    runs, ev, ext_rows, judged = await _load(lambda: (db.all_runs(), db.all_eval(), db.extracted_rows(), db.judged_bills()))
+                    runs, ev, ext_rows, judged = await _load(_eval_inputs)
                 except DbDown:
                     return db_down_notice(evaluation.refresh)
                 fields = {r["bill_id"]: db.extraction_fields(r) for r in ext_rows}
@@ -305,10 +412,6 @@ async def index():
                        {"metric": "Bill-level: all critical fields correct (%)", "value": a["bill_level_pct"]},
                        {"metric": "Arithmetic-consistent bills (%), of checkable", "value": a["arithmetic_consistent_pct"]},
                        {"metric": "Bills not arithmetic-checkable (missing values)", "value": a["arithmetic_not_checkable"]}])
-                note("Arithmetic-consistent: using only the extracted values, a bill passes if (1) present - previous reading = units, "
-                     "(2) units x rate = energy charges, (3) tax = 9% of fixed + energy + FPPCA, (4) the charges add up to current demand, "
-                     "(5) current demand + debit/credit + arrears = net payable. Bills with a missing or unparseable needed value "
-                     "are not checkable: they are left out of the percentage and counted in the row below it.")
                 table("Per-bill results", m["per_bill"])
                 table("Field mismatches: extractor vs ground truth (with judge verdict)", m["mismatches"])
                 ranked = sorted(a["per_field"].items(), key=lambda kv: (kv[1] is None, kv[1] if kv[1] is not None else 0, KEYS.index(kv[0])))
@@ -325,8 +428,6 @@ async def index():
                                               {"metric": "bills judged", "value": j.get("bills_judged")},
                                               {"metric": "agreement with ground truth (%)", "value": j.get("agreement_pct")},
                                               {"metric": "fields without verdict", "value": j.get("fields_without_verdict")}])
-                note("Fields without verdict: the judge skipped the field or answered something other than correct/incorrect. "
-                     "It counts as a miss only when the extractor was actually wrong on that field.")
                 if j.get("matrix"):
                     mx = j["matrix"]
                     table("LLM judge vs ground truth: confusion matrix (fields)",
@@ -353,13 +454,28 @@ async def index():
                       pick(["judge_calls", "judge_avg_in_tokens", "judge_avg_out_tokens", "judge_latency_avg_ms",
                             "judge_latency_p90_ms", "judge_error_rate_pct", "judge_agreement_pct"]))
 
-            await evaluation()
+            lazy["Evaluation"] = (eval_box, evaluation)
+
+        # ---------------- Field guide tab (static, built on first open) ----------------
+        with ui.tab_panel(t_guide):
+            guide_box = ui.column().classes("w-full")
+
+            def field_guide():
+                ui.label(f"All {len(KEYS)} fields read from each bill. Critical fields drive the headline accuracy numbers.").classes("text-grey")
+                rows = [{"field": LABELS[k], "group": "Critical" if k in PRIMARY else "Other", "meaning": MEANINGS[k]} for k in KEYS]
+                cols = [{"name": c, "label": c.capitalize(), "field": c, "align": "left"} for c in ("field", "group", "meaning")]
+                ui.table(columns=cols, rows=rows, row_key="field", pagination=0).classes("w-full").props("dense flat bordered")
+            lazy["Field guide"] = (guide_box, field_guide)
 
     async def on_tab(value):
         name = value if isinstance(value, str) else value.props["name"]   # tab_panels reports the tab name
-        if name == "Extracted data":
-            data_table.refresh()
-        elif name == "Evaluation":
-            evaluation.refresh()
-        elif name == "Bills":
-            bills_table.refresh()
+        if name not in lazy:
+            return                                               # Bills is kept up to date by scans and filters
+        box, fn = lazy[name]
+        if name in built:
+            if hasattr(fn, "refresh"):
+                fn.refresh()                                     # reads are cached, so this is cheap
+        else:
+            built.add(name)
+            with box:
+                await fn() if name != "Field guide" else fn()

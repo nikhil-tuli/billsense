@@ -33,11 +33,11 @@ flowchart TD
 ```
 
 Components
-- **UI layer:** Bills, Extracted data and Evaluation tabs. One scan or judge at a time, triggered by the user.
+- **UI layer:** Bills, Extracted data, Evaluation and Field guide tabs (the last three built on first open). One scan or judge at a time, triggered by the user.
 - **Services:** orchestrates a scan or judge, enforces one in-flight provider call, applies the daily Gemini cap, logs every call.
 - **Compare and metrics:** field normalisation and exact-match, arithmetic consistency, accuracy, judge quality, usage, latency, reliability, noise split.
 - **API clients:** Gemini (structured output) and Mistral (JSON mode), with request pacing and retry/backoff on 429, 5xx and network errors.
-- **DB layer:** connection pool for the Neon pooled endpoint. All writes are refused unless `APP_MODE=deployed`.
+- **DB layer:** connection pool (one warm connection) for the Neon pooled endpoint, plus an in-memory read cache cleared on every write. All writes are refused unless `APP_MODE=deployed`.
 - **Seeding:** on first deploy start, creates the schema and loads the 20 synthetic bills and ground truth if the database is empty.
 
 ## 2. Call flow
@@ -89,3 +89,4 @@ Notes
 | 2026-11-07 | Initial architecture, as built. Mistral reply parsing accepts chunked content. |
 | 2026-11-07 | Bills tab: rows expand in place with image and extracted-vs-truth field table; Account ID column (blank until scanned). The Bills query now also reads the extracted account ID, and the bills table loads evaluation rows for the detail panel. Evaluation tab: judge confusion matrix, per-field table limited to 10 with expand, definitions. No new components or external calls. |
 | 2026-11-07 | Main page `response_timeout` raised from 3s to 30s: the first page build runs several Neon queries (cold start on free tiers) and was returning HTTP 500. |
+| 2026-11-09 | Bills tab: "Bill reading period" column (month-year of extracted period end, blank until scanned) with period and scan-status filters joined to the cascade. Extracted data tab: expand removed, all 33 columns with column chooser, value filter, CSV download of selected rows (new `app/export.py`). Evaluation: info icons. New Field guide tab (`MEANINGS` in `app/fields.py`). Speed: DB read cache invalidated on writes, lean extracted-rows query, pool min_size 1, startup cache warm, lazy tab build, slow-query logging. No new external components. |

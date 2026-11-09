@@ -166,3 +166,22 @@ def test_daily_cap_blocks_new_scans(fresh_db, monkeypatch):
     assert services.scan_bill("bill_001")["ok"] and services.scan_bill("bill_001")["ok"]
     r = services.scan_bill("bill_001")
     assert not r["ok"] and "cap" in r["message"] and ex.calls == 2
+
+
+def test_cache_is_cleared_by_writes_and_csv_export_has_all_fields(fresh_db):
+    import csv, io
+    from app import export, fields
+    assert db.bills()[0]["scan_status"] != "scanned" and db.extracted_rows() == []
+    ex = FakeExtractor({"net_payable": 5.0}); ex.bill_id = "bill_001"
+    services.set_clients(ex, FakeJudge("bill_001"))
+    services.scan_bill("bill_001")
+    b = next(r for r in db.bills() if r["bill_id"] == "bill_001")          # served fresh, not stale
+    assert b["scan_status"] == "scanned" and b["extracted_period_end"]
+    rows = db.extracted_rows()
+    assert len(rows) == 1 and "raw_json" not in rows[0]                    # lean list query
+    out = list(csv.reader(io.StringIO(export.extracted_csv(rows, ["bill_001", "bill_002"]))))
+    assert out[0] == export.HEADER and len(out[0]) == 3 + len(fields.KEYS) == 36
+    assert len(out) == 2                                                   # header + only the selected scanned bill
+    d = dict(zip(out[0], out[1]))
+    assert d["Net payable"] == "5" and d["Property name"] and d["City"] and d["Owner"]
+    assert d["Account ID"] == db.get_truth("bill_001")["account_id"]

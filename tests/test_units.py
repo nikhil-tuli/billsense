@@ -4,11 +4,15 @@ from pathlib import Path
 from app import cascade, compare, metrics
 from tests.conftest import SEED, truth_of
 
+def _row(city, owner, prop, period="", status="Not scanned"):
+    return {"city": city, "owner": owner, "property_name": prop, "reading_period": period, "scan_label": status}
+
+
 PROPS = [
-    {"city": "Bengaluru", "owner": "Ravi", "property_name": "A"},
-    {"city": "Mumbai", "owner": "Ravi", "property_name": "B"},
-    {"city": "Bengaluru", "owner": "Meera", "property_name": "C"},
-    {"city": "Chennai", "owner": "Meera", "property_name": "D"},
+    _row("Bengaluru", "Ravi", "A"),
+    _row("Mumbai", "Ravi", "B"),
+    _row("Bengaluru", "Meera", "C"),
+    _row("Chennai", "Meera", "D"),
 ]
 
 
@@ -45,9 +49,11 @@ def test_cascade_each_filter_narrows_others():
     o = cascade.options(PROPS, {"property": "B"})
     assert o["city"] == ["Mumbai"] and o["owner"] == ["Ravi"]
     # an invalid leftover selection is dropped
-    assert cascade.normalise(PROPS, {"city": "Mumbai", "owner": "Meera"}, keep="city") == {"city": "Mumbai", "owner": None}
-    assert cascade.normalise(PROPS, {"city": "Bengaluru", "owner": "Meera"}, keep="city") == {"city": "Bengaluru", "owner": "Meera"}
-    bills = [{"city": "Mumbai", "owner": "Ravi", "property_name": "B", "bill_id": 1}, {"city": "Chennai", "owner": "Meera", "property_name": "D", "bill_id": 2}]
+    n = cascade.normalise(PROPS, {"city": "Mumbai", "owner": "Meera"}, keep="city")
+    assert n["city"] == "Mumbai" and n["owner"] is None
+    n = cascade.normalise(PROPS, {"city": "Bengaluru", "owner": "Meera"}, keep="city")
+    assert (n["city"], n["owner"]) == ("Bengaluru", "Meera")
+    bills = [{**_row("Mumbai", "Ravi", "B"), "bill_id": 1}, {**_row("Chennai", "Meera", "D"), "bill_id": 2}]
     assert [b["bill_id"] for b in cascade.filter_bills(bills, {"owner": "Ravi"})] == [1]
 
 
@@ -119,3 +125,25 @@ def test_judge_confusion_matrix_counts_every_cell():
     mx = metrics.judge_quality(rows)["matrix"]
     assert mx["extractor_wrong"] == {"judge_incorrect": 2, "judge_correct": 1, "no_verdict": 1}
     assert mx["extractor_right"] == {"judge_incorrect": 1, "judge_correct": 3, "no_verdict": 1}
+
+
+def test_month_year_of_bill_period_end():
+    assert cascade.month_year("07/11/2026") == "Nov 2026"
+    assert cascade.month_year("2026-12-03") == "Dec 2026"
+    assert cascade.month_year("03-Jan-2027") == "Jan 2027"
+    assert cascade.month_year(None) == "" and cascade.month_year("") == "" and cascade.month_year("garbage") == ""
+
+
+def test_cascade_reading_period_and_scan_status():
+    rows = [_row("Mumbai", "Ravi", "B", "Nov 2026", "Scanned"), _row("Chennai", "Meera", "D", "Jan 2027", "Scanned"),
+            _row("Chennai", "Meera", "E", "Dec 2026", "Scanned"), _row("Pune", "Asha", "F")]
+    o = cascade.options(rows, {})
+    assert o["period"] == ["Nov 2026", "Dec 2026", "Jan 2027"]             # chronological, scanned bills only
+    assert o["status"] == ["Not scanned", "Scanned"]
+    assert cascade.options(rows, {"city": "Pune"})["period"] == []        # unscanned bills have no period
+    assert cascade.options(rows, {"period": "Nov 2026"})["city"] == ["Mumbai"]
+    assert cascade.options(rows, {"status": "Not scanned"})["city"] == ["Pune"]
+    assert [r["property_name"] for r in cascade.filter_bills(rows, {"period": "Dec 2026"})] == ["E"]
+    assert [r["property_name"] for r in cascade.filter_bills(rows, {"status": "Not scanned"})] == ["F"]
+    n = cascade.normalise(rows, {"city": "Mumbai", "period": "Jan 2027"}, keep="period")
+    assert n["period"] == "Jan 2027" and n["city"] is None

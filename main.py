@@ -13,6 +13,11 @@ async def startup():
     if s.database_url and s.writes_enabled:
         await run.io_bound(db.init_schema)
         await run.io_bound(seed.seed_if_empty)
+    if s.database_url:
+        try:                                                   # pre-load reads so the first visit is fast
+            await run.io_bound(db.warm)
+        except Exception:                                      # noqa: BLE001 - never block startup on this
+            pass
 
 
 nicegui_app.on_startup(startup)

@@ -42,5 +42,6 @@ Tests use fake Gemini/Mistral clients; no API keys needed. They do not call the 
 - One provider call runs at a time; a second Scan/Judge click while one is in flight is refused with a notice.
 - Latency = provider time of the final attempt (retries are counted separately). Dates are compared exactly as printed.
 - Judge verdicts the model omits or garbles are stored as `missing` and counted as misses when the extractor was actually wrong.
+- Extracted data tab: column chooser, filter rows by value, tick rows and download them as CSV (all 33 fields). Field guide tab: every field with its meaning.
 - Evaluation tab: summary, per-bill table, field-mismatch table, per-field accuracy, judge quality, usage, latency (avg/median/P90/P95/max), reliability, and a split by noise level.
 - No authentication (as agreed). Because anyone with the URL can trigger paid-quota calls, consider a separate read-only Neon role for local runs.

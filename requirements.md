@@ -21,20 +21,23 @@ Separate repository from `doc-ocr-pipeline`. Scope: electricity bills only. A ch
 1. **Bills**: browse and scan bills.
 2. **Extracted Data**: all bills that already have extracted data.
 3. **Evaluation**: accuracy, judge and usage metrics for the 20-bill sample.
+4. **Field guide**: all 33 bill fields with their meaning and whether they are critical (static; source `app/fields.py`).
 
 ### 4.2 Bills tab
-- Three cascading filters: **City**, **Owner**, **Property Name**. Choosing any one narrows the other two to matching values (e.g. choosing a city shows only that city's owners and properties). Any one of the three can be the starting filter.
+- Five cascading filters: **City**, **Owner**, **Property Name**, **Bill reading period**, **Scan status** (All / Scanned / Not scanned). Choosing any one narrows the others to matching values. Any one can be the starting filter. Reading-period options come from scanned bills only, so unscanned bills show only under "All".
 - Choosing a Property Name shows that property's bill list.
 - Each bill has a **Scan** button. Scanning runs extraction on the existing stored image. No new image is generated. Scanning is one bill at a time, from the UI.
 - **Account ID** is the leftmost data column. It is blank until the bill is scanned, then shows the account ID read from the image.
-- **Bill period** always shows the billing period from master data, because it identifies the bill when a property has several periods.
+- **Bill reading period** shows the month and year of the extracted bill period end (e.g. "Nov 2026"). It is blank until the bill is scanned.
+- The bill image is shown in the expanded row regardless of scan status.
 - Each row expands in place (like the Extracted Data tab). The stored bill image is on the left (click to enlarge); on the right is a field table with columns Field, Extracted, Ground truth, Match (tick/cross) and Judge verdict (once judged). By default the 11 primary fields are shown, with toggles for all 33 fields and for mismatches only. An unscanned bill shows the image and a "not scanned" note.
 - Re-scanning **overwrites** the earlier extraction. No history of extracted data is kept.
 
 ### 4.3 Extracted Data tab
-- Table with one row per scanned bill.
-- Columns: City, Owner, Property Name, then the primary fields below.
-- Clicking a row expands to show the secondary fields and the bill image.
+- Table with one row per scanned bill. No row expansion.
+- Columns: City, Owner, Property Name, then all 33 fields. The 11 primary fields are visible by default; a **column chooser** shows or hides the others.
+- **Row filter by value:** pick a field, type text, Add filter; a row is kept if the field contains the text (case-insensitive). Filters combine (AND) and show as removable chips.
+- **CSV download:** tick one or more rows (header box selects all shown rows) and press "Download CSV (n selected)". The CSV has City, Owner, Property name and all 33 fields, regardless of visible columns.
 
 ### 4.4 Fields
 - **Primary (table columns):** Account ID, RR No, Bill No, Bill Period, Units Consumed, Fixed Charges, Energy Charges, Tax, Net Payable, Due Date.
@@ -99,3 +102,5 @@ Note: extracted data is overwritten on re-scan, but `extraction_runs` stays appe
 - Daily guard `GEMINI_DAILY_CAP`; single in-flight provider call; retries with backoff on 429/5xx/network, honouring Retry-After.
 - Arithmetic consistency is reported as pass/fail/not-checkable (null inputs are not failures).
 - Evaluation adds per-bill and field-mismatch tables. Authentication remains out of scope.
+- Evaluation info (i) icons explain Critical fields match (lists the 11 fields), Arithmetic-consistent bills (the 5 checks and non-checkable bills) and Fields without verdict.
+- Speed: reads are cached in memory (cleared on every write; 120 s TTL as a safety net), the extracted list query skips `raw_json`, the pool keeps one warm connection, the cache is warmed at startup, and the Extracted data, Evaluation and Field guide tabs are built on first open. Queries or page loads over 0.5 s are logged as warnings.
