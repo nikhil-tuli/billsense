@@ -1,5 +1,8 @@
 # BillSense: electricity bill extraction
 
+## The problem
+Indian businesses that manage properties, whether owned, leased or rented, struggle to digitise how electricity bill details are captured and passed to accounting and payment systems accurately, with little manual intervention.
+
 ## What it does
 BillSense reads electricity bill images with an extractor model (Gemini), checks the result with a judge model (Mistral),
 and shows how accurate, fast and reliable both models are.
