@@ -1,4 +1,4 @@
-# Electricity Bill OCR Extraction Tool: Requirements (v0.1 draft)
+# Electricity Bill OCR Extraction Tool: Requirements (v0.2 draft)
 
 Separate repository from `doc-ocr-pipeline`. Scope: electricity bills only. A chatbot will be added later (out of scope for v0.1).
 
@@ -11,9 +11,27 @@ Separate repository from `doc-ocr-pipeline`. Scope: electricity bills only. A ch
 
 ## 3. Data and assumptions
 - All data is synthetic. Bills are English-only, in a BESCOM-like layout with a fictional utility name and a "SAMPLE" mark.
-- 20 bills for v0.1 (20 properties, 1 bill each), from 12 owners across Indian metros (Bengaluru, Mumbai, Delhi, Chennai, Hyderabad, Pune, Kolkata). Some owners hold several properties in different cities.
+- **100 sample bills** (100 properties, 1 bill each). v0.1 shipped the first 20 (12 owners, 7 cities: Bengaluru, Mumbai, Delhi, Chennai, Hyderabad, Pune, Kolkata); v0.2 appends 80 more. See 3a.
+- Some owners hold several properties in different cities.
 - A seed file maps each bill to City, Owner and Property Name. Ground-truth JSON is generated alongside each bill image.
 - The synthetic bills are generated outside this repo (`generate_bills.py`). This repo only loads them.
+
+### 3a. Scale-up to 100 bills (v0.2)
+- **Scope:** 100 properties, 1 bill each. No change to fields, tabs or models.
+- **Data mix (dummy, decided by us):**
+  - Owners: about 40 in total (the existing 12 plus about 28 new). Some own several properties across cities.
+  - Cities: 10 (the existing 7 plus Ahmedabad, Jaipur, Lucknow). Roughly 10 properties per city.
+  - Noise: same proportions. Existing 20 stay 7/7/6. The new 80 are 28 clean / 28 medium / 24 noisy, giving 35/35/30 overall.
+- **Generation:** `generate_bills.py` is extended to emit bills 21 to 100 with seed 42. Bills 1 to 20 stay byte-identical, so existing ground truth and scan results remain valid.
+- **Append only:** previous data is never cleaned. The existing 20 bills, their scan results, judge verdicts, `extraction_runs` and all uploads stay untouched.
+  - The seeder runs at startup in deployed mode and inserts only bills, properties and owners that are missing. It never updates or deletes an existing row.
+  - It is idempotent: a second start adds nothing.
+  - New owners, properties and cities are matched by name, so existing ones are reused, not duplicated.
+  - Uploaded bills (`upl_NNN`, `UPL-n`) cannot clash with sample ids (`bill_NNN`).
+  - New bills start as "Not scanned".
+- **Cost and limits:** a full run is 100 Gemini and 100 Mistral calls, one bill at a time. This stays under the Gemini 500/day cap. At 15 requests/min a full scan takes about 7 minutes. Accepted.
+- **Storage:** about 20 MB more in Neon. Accepted.
+- **UI:** Bills, Extracted data and Evaluation tabs must stay responsive with 100 bills (first paint under 1 s from cache). Filters, counts and metrics cover all 100.
 
 ## 4. Functional requirements
 
@@ -49,7 +67,7 @@ Separate repository from `doc-ocr-pipeline`. Scope: electricity bills only. A ch
 - A bill is unique on (`account_id`, `bill_period_start`).
 
 ### 4.6 Evaluation tab
-- Run on **all 20 bills**, generated with a fixed seed (42) and split across clean (7), medium (7) and noisy (6) bills.
+- Run on **all 100 sample bills**, generated with a fixed seed (42) and split across clean (35), medium (35) and noisy (30) bills. Uploaded bills stay outside this set (judge-only, see 4.8).
 - Shows Gemini extraction vs ground truth, and LLM-judge verdicts vs ground truth, per field and per bill.
 - Workflow: scan each bill on the Bills tab, then press Judge on the Evaluation tab for that bill. Both steps are one bill at a time; there is no bulk job.
 - Shows the metrics in section 7.
@@ -74,7 +92,7 @@ Separate repository from `doc-ocr-pipeline`. Scope: electricity bills only. A ch
 1. Size is 2 MB or less, and the file is not empty.
 2. Content check: the file's first bytes must match JPEG, PNG or PDF. The type is taken from the content, not the extension. Mismatch is rejected.
 3. The file must actually open: the image decodes, or the PDF opens, is not encrypted and has at least 1 page. A pixel cap guards against decompression bombs.
-4. Quality gate: minimum resolution and a blur score. Initial thresholds (config values, tunable): short side at least 500 px; blur score (variance of the Laplacian after resizing to 1000 px width) at least 8; at most 25 million pixels. Chosen from the 20 sample bills (600 to 740 px wide, scores 11 to 665) and blurred copies of them (heavy blur scores below 3).
+4. Quality gate: minimum resolution and a blur score. Initial thresholds (config values, tunable): short side at least 500 px; blur score (variance of the Laplacian after resizing to 1000 px width) at least 8; at most 25 million pixels. Chosen from the first 20 sample bills (600 to 740 px wide, scores 11 to 665) and blurred copies of them (heavy blur scores below 3).
 5. Duplicate check on city + property + owner + month-year (see below).
 - A file failing 2 to 4 is rejected. It is kept and logged as Failure with a reason (e.g. "Too blurry", "Resolution too low", "Not a valid PDF").
 
@@ -112,9 +130,9 @@ Separate repository from `doc-ocr-pipeline`. Scope: electricity bills only. A ch
 - **Extraction model:** `gemini-3.5-flash-lite` (Gemini free tier). Verified limits: 15 requests/min, 500 requests/day, 250,000 input tokens/min. The model id is pinned, never an alias, and kept as a config value. Output is JSON against a fixed schema. Retry with backoff on 429.
 - **Judge model:** `mistral-large-4` (Mistral free plan). Verified limits: 20,000 tokens/min, 0.83 requests/sec. Pin the exact id, never a `-latest` alias. The judge sees the bill image and the extracted JSON, and returns a verdict per field.
 - **Frontend:** NiceGUI hosted on Render (free tier).
-- **Seeding:** on first start in deployed mode, if the database is empty, the app loads the bundled `seed_data/` (20 images, ground truth, owners, properties). Local mode never writes.
+- **Seeding:** on first start in deployed mode, if the database is empty, the app loads the bundled `seed_data/` (100 images, ground truth, owners, properties). From v0.2 the seeder is a top-up: see 3a. Local mode never writes.
 - **Read-only local:** extraction and DB writes work only in the deployed app. Local runs are read-only, and the Gemini and Mistral keys exist only as Render environment variables.
-- **Pacing:** UI scans are one at a time, well inside the limits. The 20-bill evaluation run is paced to stay under 15 extractor requests/min and the judge's 20,000 tokens/min.
+- **Pacing:** UI scans are one at a time, well inside the limits. The 100-bill evaluation run is paced to stay under 15 extractor requests/min and the judge's 20,000 tokens/min.
 - **Latency:** list and filter views must stay responsive. Cold starts on Render and Neon free tiers are accepted but must be measured.
 - **Process:** a coding agent writes the code, then a separate review agent does a senior-engineer review before every deployment. Review checklist: secrets handling, SQL safety, idempotent writes, error and quota handling, read-only enforcement locally, tests passing.
 
@@ -165,7 +183,7 @@ Note: extracted data is overwritten on re-scan, but `extraction_runs` stays appe
 
 
 ### 7a. Upload evals
-- **Quality gate:** build a labelled set by degrading the 20 sample bills (blur, low resolution, dark, crop). Report false-reject rate on good files and miss rate on bad ones. Calibrate thresholds from it.
+- **Quality gate:** build a labelled set by degrading the sample bills (first 20 are enough) (blur, low resolution, dark, crop). Report false-reject rate on good files and miss rate on bad ones. Calibrate thresholds from it.
 - **Validation:** unit cases for wrong extension, corrupt file, encrypted or empty PDF, oversize, multi-page PDF, huge pixel count.
 - **Duplicates:** replace and cancel leave exactly one bill, no orphan extraction or verdicts, correct history statuses.
 - **Reliability and latency:** success / failure / interrupted counts, failure reasons, p50 / p90 per stage (render, quality check, save).
