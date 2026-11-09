@@ -39,7 +39,7 @@ Separate repository from `doc-ocr-pipeline`. Scope: electricity bills only. A ch
 1. **Bills**: browse and scan bills.
 2. **Upload** (section 4.8): upload your own bill file, with history.
 3. **Extracted Data**: all bills that already have extracted data.
-4. **Evaluation**: accuracy, judge and usage metrics for the 20-bill sample.
+4. **Evaluation**: accuracy, judge and usage metrics for the 100-bill sample.
 5. **Field guide**: all 33 bill fields with their meaning and whether they are critical (static; source `app/fields.py`).
 
 ### 4.2 Bills tab
@@ -191,7 +191,7 @@ Note: extracted data is overwritten on re-scan, but `extraction_runs` stays appe
 - **Human spot-check:** 10 uploaded bills reviewed by you against the image.
 
 ## 8. Risks and open items
-- **Deferred: ground truth is not independent of the images.** Today the generator creates each bill's values first, writes them to the ground-truth JSON, and renders the image from the same values. That is acceptable for this synthetic 20-bill evaluation but does not scale or reflect real bills. Later options: human-verified labels on real bills, or a separately keyed ground-truth source. Revisit before any real-bill or larger-scale evaluation.
+- **Deferred: ground truth is not independent of the images.** Today the generator creates each bill's values first, writes them to the ground-truth JSON, and renders the image from the same values. That is acceptable for this synthetic 100-bill evaluation but does not scale or reflect real bills. Later options: human-verified labels on real bills, or a separately keyed ground-truth source. Revisit before any real-bill or larger-scale evaluation.
 - **Judge strength:** a judge weaker than the extractor may miss real errors. Large 4 is Mistral's largest current multimodal model, and it is a different model family from the extractor. Judge-vs-ground-truth agreement is therefore a required result, and we should be ready to swap the judge model.
 - **Uploads:** bill files are stored in Neon (2 MB each; failures are kept too). No login means anyone with the URL can upload and view. Judge-estimated accuracy on uploads is not ground truth.
 - **Free-tier terms:** limits are verified (section 5). A third-party tracker reports that Mistral free-plan data may be used for model improvement unless opted out; confirm in your Mistral account settings. Gemini free-tier content may be used to improve Google's products, so no real bills.
