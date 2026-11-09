@@ -80,3 +80,23 @@ CREATE TABLE IF NOT EXISTS eval_results (
 );
 
 ALTER TABLE extractions ADD COLUMN IF NOT EXISTS raw_json JSONB;
+ALTER TABLE eval_results ALTER COLUMN extractor_match DROP NOT NULL;   -- uploaded bills have no ground truth
+ALTER TABLE bills ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'sample';   -- sample | upload (backend only)
+
+-- One row per upload attempt. `file` is kept for non-success rows (Retry); cleared on success (image lives in bill_images).
+CREATE TABLE IF NOT EXISTS uploads (
+    upload_id     BIGSERIAL PRIMARY KEY,
+    bill_id       TEXT REFERENCES bills(bill_id) ON DELETE SET NULL,
+    city          TEXT NOT NULL,
+    property_name TEXT NOT NULL,
+    owner         TEXT NOT NULL,
+    bill_month    DATE NOT NULL,                   -- first day of the bill month
+    file_name     TEXT NOT NULL,
+    mime          TEXT,
+    size_bytes    INTEGER,
+    status        TEXT NOT NULL DEFAULT 'pending', -- pending | success | failure | replaced
+    reason        TEXT,
+    file          BYTEA,
+    uploaded_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    finished_at   TIMESTAMPTZ
+);

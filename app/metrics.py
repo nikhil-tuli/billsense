@@ -173,3 +173,23 @@ def summarize(runs, eval_rows, extraction_field_dicts, prices=None):
         "per_bill": per_bill(eval_rows, runs),
         "mismatches": mismatches(eval_rows),
     }
+
+
+def upload_summary(upload_eval_rows, upload_field_dicts):
+    """Judge-estimated quality of uploaded bills (no ground truth). upload_field_dicts: bill_id -> extracted fields."""
+    from app.fields import PRIMARY
+    by_bill = {}
+    for r in upload_eval_rows:
+        by_bill.setdefault(r["bill_id"], {})[r["field"]] = r["judge_verdict"]
+    judged = {b: v for b, v in by_bill.items() if any(x is not None for x in v.values())}
+    verdicts = [x for v in judged.values() for x in v.values()]
+    n_correct = sum(x == "correct" for x in verdicts)
+    n_incorrect = sum(x == "incorrect" for x in verdicts)
+    n_missing = sum(x == "missing" for x in verdicts)
+    complete = sum(all(f.get(k) not in (None, "") for k in PRIMARY) for f in upload_field_dicts.values())
+    all_ok = sum(all(v.get(k) == "correct" for k in PRIMARY) for v in judged.values())
+    return {"bills_scanned": len(upload_field_dicts), "bills_judged": len(judged),
+            "fields_judged_correct_pct": pct(n_correct, n_correct + n_incorrect),
+            "bills_critical_all_correct_pct": pct(all_ok, len(judged)),
+            "critical_complete_pct": pct(complete, len(upload_field_dicts)),
+            "fields_without_verdict": n_missing}

@@ -75,15 +75,20 @@ def scan_bill(bill_id: str) -> dict:
             if used >= s.gemini_daily_cap:
                 return {"ok": False, "message": f"Daily extraction cap reached ({used} calls in 24h, cap {s.gemini_daily_cap})."}
             img = db.get_image(bill_id)
-            truth = db.get_truth(bill_id)
-            if not img or truth is None:
+            bill = db.get_bill(bill_id)
+            sample = bool(bill) and bill["source"] == "sample"      # uploaded bills have no ground truth
+            truth = db.get_truth(bill_id) if sample else None
+            if not img or (sample and truth is None):
                 return {"ok": False, "message": f"{bill_id}: image or ground truth missing"}
             res = _safe(extractor().run, bytes(img["image"]), img["mime"])
             db.log_run(bill_id, "extractor", s.gemini_model, res)
             if res.status != "ok":
                 return {"ok": False, "message": f"Extraction failed ({res.status}): {res.error or ''}".strip()}
             fields = {k: res.data.get(k) for k in KEYS}
-            db.save_extraction(bill_id, fields, s.gemini_model, compare(truth, fields))
+            rows = compare(truth, fields) if sample else [
+                {"field": k, "truth": None, "extracted": None if v is None else str(v), "extractor_match": None}
+                for k, v in fields.items()]
+            db.save_extraction(bill_id, fields, s.gemini_model, rows)
             return {"ok": True, "message": f"Scanned {bill_id} in {res.latency_ms / 1000:.1f}s"}
     except Busy as e:
         return {"ok": False, "message": str(e)}

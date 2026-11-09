@@ -9,7 +9,11 @@ from tests.conftest import FakeExtractor, FakeJudge
 
 
 def selects(user):
-    return {s.props.get("label"): s for s in user.find(kind=ui.select).elements}
+    """Bills-tab filters by label (the Upload tab has selects with the same labels; Bills ones are created first)."""
+    out = {}
+    for s in sorted(user.find(kind=ui.select).elements, key=lambda e: e.id):
+        out.setdefault(s.props.get("label"), s)
+    return out
 
 
 def bills_table(user):
@@ -136,3 +140,35 @@ async def test_scan_event_in_read_only_mode_does_nothing(user: User, monkeypatch
     emit(bills_table(user), "scan", "bill_001")
     await user.should_see("Read-only mode", retries=20)
     assert ex.calls == 0 and db.get_extraction("bill_001") is None
+
+
+@pytest.mark.usefixtures("fresh_db")
+async def test_upload_tab_is_second_and_history_view_and_retry(user: User, monkeypatch):
+    import io
+    from datetime import date
+    from PIL import Image, ImageFilter
+    from app import uploads
+    from tests.test_uploads import sample_jpg, to_bytes
+    ok = uploads.Job("Pune", "Green Park 2", "R Iyer", date(2026, 10, 1), "good.jpg", sample_jpg()).run()
+    blurry = to_bytes(Image.open(io.BytesIO(sample_jpg())).filter(ImageFilter.GaussianBlur(3)))
+    bad = uploads.Job("Delhi", "Lotus 9", "S Khan", date(2026, 9, 1), "blurry.jpg", blurry).run()
+    assert ok["ok"] and not bad["ok"]
+    await user.open("/")
+    assert [t.props.get("label") for t in sorted(user.find(kind=ui.tab).elements, key=lambda e: e.id)] == \
+        ["Bills", "Upload", "Extracted data", "Evaluation", "Field guide"]
+    user.find(kind=ui.tab, content="Upload").click()
+    await user.should_see("Don't upload real bills")
+    await user.should_see("Upload history")
+    hist = [t for t in user.find(kind=ui.table).elements if any(c["name"] == "uploaded" for c in t.columns)][0]
+    by_file = {r["file"]: r for r in hist.rows}
+    assert by_file["good.jpg"]["status"] == "Success" and by_file["blurry.jpg"]["status"] == "Failure"
+    assert "blurry" in by_file["blurry.jpg"]["reason"].lower() and by_file["good.jpg"]["month"] == "Oct 2026"
+    emit(hist, "view", by_file["good.jpg"])                               # View jumps to the bill on the Bills tab
+    await asyncio.sleep(0.5)
+    assert selects(user)["City"].value == "Pune" and selects(user)["Property name"].value == "Green Park 2"
+    assert names(user) == ["Green Park 2"]
+    assert bills_table(user).rows[0]["_open"] is True and bills_table(user).rows[0]["status"] == "Not scanned"
+    monkeypatch.setenv("UPLOAD_MIN_BLUR_SCORE", "0")                      # Retry re-runs the kept file
+    emit(hist, "retry", by_file["blurry.jpg"]["upload_id"])
+    await user.should_see("Uploaded blurry.jpg", retries=40)
+    assert db.get_upload(by_file["blurry.jpg"]["upload_id"])["status"] == "success"

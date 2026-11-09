@@ -1,47 +1,72 @@
-# BillSense — electricity bill extraction
+# BillSense: electricity bill extraction
 
-NiceGUI app that scans stored (synthetic) electricity bill images one at a time with Gemini, stores the
-extracted fields in Neon Postgres, and evaluates the extraction against ground truth and an LLM judge
-(Mistral). See `requirements.md` for the agreed spec and `ARCHITECTURE.md` for the design and call flow.
+## What it does
+BillSense reads electricity bill images with an extractor model (Gemini), checks the result with a judge model (Mistral),
+and shows how accurate, fast and reliable both models are.
 
-## Layout
-- `main.py` entry point; `app/ui.py` pages (Bills, Extracted data, Evaluation)
-- `app/clients.py` Gemini extractor + Mistral judge (pacing, retries, usage capture)
-- `app/services.py` scan / judge one bill; writes only when `APP_MODE=deployed`
-- `app/compare.py`, `app/metrics.py` field comparison and evaluation metrics
-- `app/db.py`, `app/schema.sql`, `app/seed.py` Neon access, schema, first-start seeding
-- `seed_data/` 20 synthetic bills (jpg), ground truth JSON, `seed.json`; `tools/generate_bills.py` regenerates them
-  (`python tools/generate_bills.py --out out --seed 42 --count 20`)
+## Screens
+| Screen | What you can do |
+|---|---|
+| Bills | Filter by city, owner, property, bill reading period and scan status. Scan a bill. Expand a row to see the image and extracted vs ground-truth fields. |
+| Upload | Upload your own bill (jpg, png, pdf up to 2 MB). Unclear files are rejected. Upload history with View and Retry. Replace an existing bill after a prompt. |
+| Extracted data | All 33 fields per scanned bill. Choose columns, filter rows by value, download selected rows as CSV. |
+| Evaluation | Accuracy, judge quality, usage, latency, reliability, split by noise level. |
+| Field guide | Every field with its meaning. |
 
-## Run
-```
-pip install -r requirements.txt
-cp .env.example .env   # fill in values, then export them
-python main.py         # http://localhost:8080
-```
-- **Local (default):** read-only. Browsing works; Scan/Judge show a notice and do nothing.
-- **Deployed:** set `APP_MODE=deployed` (render.yaml does this). On first start the schema is created and
-  `seed_data/` is loaded if the database is empty.
+![Bills](docs/screens/bills.png)
+![Upload](docs/screens/upload.png)
+![Extracted data](docs/screens/extracted-data.png)
+![Evaluation](docs/screens/evaluation.png)
+![Field guide](docs/screens/field-guide.png)
 
-## Render
-Create a Web Service from this repo (free plan). Set `DATABASE_URL` (Neon pooled string), `GEMINI_API_KEY`,
-`MISTRAL_API_KEY`. `GEMINI_MODEL` / `MISTRAL_MODEL` default to `gemini-3.5-flash-lite` / `mistral-large-4`.
+## Key functional requirements
+- Bill upload: city, property, owner, bill month-year, a jpg, png or pdf up to 2 MB with content, resolution and blur checks, a prompt before replacing a duplicate, and a history with a link to the bill. Uploading makes no model call; scan and judge stay manual. See `requirements.md` section 4.8.
+- Extract 33 bill fields with the extractor model (Gemini), then review them with the judge model (Mistral). One bill at a time, started by the user.
+- Analyse extracted fields in the app and export them as CSV.
+- Review extraction accuracy, judge accuracy, model latency and reliability metrics.
 
-## Tests
+## Key technical requirements
+- Sub-second response for app users. Reads are cached in memory (cleared on every write) and heavy tabs load on first open. The free Render (app hosting) and Neon tiers (Postgres DB hosting) can still take up to a minute to wake after idle.
+- Free tiers only: Render web service, Neon Postgres, Gemini and Mistral free plans.
+- All data lives in Neon, including bill images as `bytea`. No other storage.
+- Provider limits respected: request pacing, retry with backoff, daily Gemini cap, one provider call at a time.
+- No authentication (agreed). Do not upload real bills.
+- Writes are allowed only when `APP_MODE=deployed`. Local runs are read-only.
+- Secrets only in environment variables.
+
+## Challenges faced and mitigation
+- Free-tier rate limits and quotas: pacing, retries that honour Retry-After, a daily cap and a single in-flight call.
+- Mistral rejected greedy sampling (`top_p must be 1`): payload fixed.
+- Mistral sometimes returns its answer as a list of chunks, which broke parsing: parser accepts both forms and falls back to the JSON braces.
+- Judge verdicts omitted or garbled: stored as `missing`, counted as a miss only when the extractor was wrong.
+- First page load returned HTTP 500 on cold start: page response timeout raised from 3 s to 30 s.
+- Slow loads: Render (Singapore) and Neon (US) are far apart and tabs re-queried every time. Added an in-memory cache, lean queries, a warm connection and lazy tabs. A same-region move is still advisable, and gains are not yet measured on Render.
+- Evaluation was hard to read: added a confusion matrix, info icons and plain definitions for each metric.
+- Ground truth is not independent of the images (both come from the same generator): accepted for this synthetic set and logged as a deferred item.
+
+## How to access the app
+App URL: https://billsense-c76d.onrender.com/ (free tier: the first load after idle can take about a minute).
+
+### Run on your machine
+1. Install Python 3.11 or newer.
+2. Clone the repo and install: `pip install -r requirements.txt`
+3. Copy `.env.example` to `.env` and fill in `DATABASE_URL` (a Neon pooled connection string).
+4. Add `GEMINI_API_KEY` and `MISTRAL_API_KEY` if you want to scan and judge.
+5. Export the variables, then run `python main.py` and open http://localhost:8080
+6. Default mode is read-only. For scanning, judging and first-start seeding set `APP_MODE=deployed`. This writes to the database in `DATABASE_URL`.
+
+### Deploy on Render
+Create a Web Service from this repo (free plan). Set `APP_MODE=deployed`, `DATABASE_URL`, `GEMINI_API_KEY` and `MISTRAL_API_KEY`.
+On first start the schema is created and the 20 bills are loaded. `render.yaml` holds the defaults.
+
+### Tests
 ```
 pip install -r requirements-dev.txt
-export TEST_DATABASE_URL=postgresql://user@localhost:5432/billtest   # a throwaway Postgres; its public schema is DROPPED
+export TEST_DATABASE_URL=postgresql://user@localhost:5432/billtest   # throwaway database; its public schema is DROPPED
 pytest
 ```
-Tests use fake Gemini/Mistral clients; no API keys needed. They do not call the live APIs.
 
-## Notes
-- Re-scan overwrites the bill's extraction and clears its judge verdicts; `extraction_runs` keeps every call.
-- Optional `*_PRICE_IN_PER_M` / `*_PRICE_OUT_PER_M` env vars (USD per 1M tokens) enable the cost metric.
-- `GEMINI_DAILY_CAP` (default 450) blocks new scans once that many extractor calls were made in the last 24h (free tier is 500/day).
-- One provider call runs at a time; a second Scan/Judge click while one is in flight is refused with a notice.
-- Latency = provider time of the final attempt (retries are counted separately). Dates are compared exactly as printed.
-- Judge verdicts the model omits or garbles are stored as `missing` and counted as misses when the extractor was actually wrong.
-- Extracted data tab: column chooser, filter rows by value, tick rows and download them as CSV (all 33 fields). Field guide tab: every field with its meaning.
-- Evaluation tab: summary, per-bill table, field-mismatch table, per-field accuracy, judge quality, usage, latency (avg/median/P90/P95/max), reliability, and a split by noise level.
-- No authentication (as agreed). Because anyone with the URL can trigger paid-quota calls, consider a separate read-only Neon role for local runs.
+## More
+- `requirements.md`: agreed requirements and decisions.
+- `ARCHITECTURE.md`: high-level design, call flow, data model, change log.
+- Optional env vars: `UPLOAD_MIN_SHORT_SIDE` (500), `UPLOAD_MIN_BLUR_SCORE` (8), `UPLOAD_MAX_PIXELS` (25000000), `GEMINI_DAILY_CAP` (default 450), `*_PRICE_IN_PER_M` and `*_PRICE_OUT_PER_M` (enable the cost metric), `GEMINI_MODEL`, `MISTRAL_MODEL`.

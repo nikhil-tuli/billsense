@@ -3,7 +3,7 @@ import logging
 import threading
 import time
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from psycopg.rows import dict_row
@@ -117,7 +117,7 @@ def bills():
 
 def _bills():
     return q("""SELECT b.bill_id, b.account_id, b.bill_period_start, b.bill_period_end, b.scan_status,
-                       b.noise_level, p.property_name, p.city, o.name AS owner,
+                       b.noise_level, b.source, p.property_name, p.city, o.name AS owner,
                        e.account_id AS extracted_account_id, e.bill_period_end AS extracted_period_end
                 FROM bills b JOIN properties p USING (account_id) JOIN owners o USING (owner_id)
                 LEFT JOIN extractions e ON e.bill_id = b.bill_id
@@ -125,7 +125,7 @@ def _bills():
 
 
 def get_bill(bill_id):
-    return one("""SELECT b.bill_id, b.account_id, b.bill_period_start, b.bill_period_end, b.scan_status,
+    return one("""SELECT b.source, b.bill_id, b.account_id, b.bill_period_start, b.bill_period_end, b.scan_status,
                          b.noise_level, p.property_name, p.city, o.name AS owner
                   FROM bills b JOIN properties p USING (account_id) JOIN owners o USING (owner_id)
                   WHERE b.bill_id=%s""", (bill_id,))
@@ -150,7 +150,7 @@ def extracted_rows():
 
 def _extracted_rows():
     cols = ", ".join(f"e.{k}" for k in PRIMARY)            # raw_json is large and not needed for lists
-    return q(f"""SELECT b.bill_id, b.noise_level, p.property_name, p.city, o.name AS owner, {cols},
+    return q(f"""SELECT b.bill_id, b.noise_level, b.source, p.property_name, p.city, o.name AS owner, {cols},
                        e.secondary_fields, e.model, e.extracted_at
                 FROM extractions e JOIN bills b ON b.bill_id = e.bill_id JOIN properties p ON p.account_id = b.account_id
                 JOIN owners o ON o.owner_id = p.owner_id ORDER BY b.bill_id""")
@@ -178,8 +178,14 @@ def all_eval():
 
 
 def _all_eval():
+    """Ground-truth evaluation rows: sample bills only (uploaded bills have no ground truth)."""
     return q("""SELECT e.*, b.noise_level FROM eval_results e JOIN bills b USING (bill_id)
-                ORDER BY e.bill_id, e.field""")
+                WHERE b.source = 'sample' ORDER BY e.bill_id, e.field""")
+
+
+def eval_rows_all():
+    return cached("eval_rows_all", lambda: q("""SELECT e.*, b.source FROM eval_results e JOIN bills b USING (bill_id)
+                                               ORDER BY e.bill_id, e.field"""))
 
 
 def eval_for(bill_id):
@@ -193,7 +199,7 @@ def judged_bills():
 
 def warm():
     """Pre-load the cached reads (also opens the first connection) so the first page view is fast."""
-    for fn in (properties, bills, extracted_rows, all_runs, all_eval, judged_bills):
+    for fn in (properties, bills, extracted_rows, all_runs, all_eval, eval_rows_all, judged_bills, uploads_list):
         fn()
 
 
@@ -251,7 +257,9 @@ def save_judge(bill_id, verdicts: dict):
         for r in c.execute("SELECT field, extractor_match FROM eval_results WHERE bill_id=%s", (bill_id,)).fetchall():
             v = verdicts.get(r["field"])
             v = v if v in ("correct", "incorrect") else "missing"
-            if v == "missing":
+            if r["extractor_match"] is None:                       # uploaded bill: no ground truth to agree with
+                agrees = None
+            elif v == "missing":
                 agrees = False if not r["extractor_match"] else None   # an omitted true error is a miss
             else:
                 agrees = (v == "correct") == r["extractor_match"]
@@ -262,3 +270,108 @@ def save_judge(bill_id, verdicts: dict):
 def runs_last_24h(role):
     return one("SELECT count(*) AS n FROM extraction_runs WHERE role=%s AND created_at > now() - interval '24 hours'",
                (role,))["n"]
+
+
+# ---- uploads -----------------------------------------------------------------
+class Duplicate(Exception):
+    def __init__(self, bill_id):
+        super().__init__(bill_id)
+        self.bill_id = bill_id
+
+
+_FIND_BILL = """SELECT b.bill_id, b.source, b.scan_status FROM bills b JOIN properties p USING (account_id)
+                JOIN owners o USING (owner_id)
+                WHERE lower(p.city)=lower(%s) AND lower(p.property_name)=lower(%s) AND lower(o.name)=lower(%s)
+                  AND date_trunc('month', b.bill_period_end)::date = %s"""
+
+
+def find_bill(city, prop, owner, month):
+    """The existing bill (sample or uploaded) for city + property + owner + month, if any."""
+    return one(_FIND_BILL, (city, prop, owner, month.replace(day=1)))
+
+
+def upload_insert(meta, mime, size, data) -> int:
+    _require_writes()
+    r = one("""INSERT INTO uploads (city, property_name, owner, bill_month, file_name, mime, size_bytes, file)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s) RETURNING upload_id""",
+            (meta["city"], meta["property"], meta["owner"], meta["month"], meta["file_name"], mime, size, data))
+    clear_cache()
+    return r["upload_id"]
+
+
+def upload_reset(upload_id):
+    _require_writes()
+    q("UPDATE uploads SET status='pending', reason=NULL, finished_at=NULL, uploaded_at=now() WHERE upload_id=%s RETURNING 1",
+      (upload_id,))
+    clear_cache()
+
+
+def upload_finish(upload_id, status, reason=None):
+    _require_writes()
+    q("UPDATE uploads SET status=%s, reason=%s, finished_at=now() WHERE upload_id=%s RETURNING 1",
+      (status, reason, upload_id))
+    clear_cache()
+
+
+def get_upload(upload_id):
+    return one("SELECT * FROM uploads WHERE upload_id=%s", (upload_id,))
+
+
+def uploads_list(limit=200):
+    return cached("uploads_list", lambda: q("""SELECT upload_id, bill_id, city, property_name, owner, bill_month, file_name,
+                                               size_bytes, status, reason, uploaded_at
+                                               FROM uploads ORDER BY upload_id DESC LIMIT %s""", (limit,)))
+
+
+def fail_stale_uploads(minutes=10) -> int:
+    """Uploads still Pending after `minutes` (e.g. the server restarted mid-upload) become Failure."""
+    _require_writes()
+    rows = q("""UPDATE uploads SET status='failure', reason='Interrupted. Use Retry or upload again.', finished_at=now()
+                WHERE status='pending' AND uploaded_at < now() - make_interval(mins => %s) RETURNING upload_id""",
+             (minutes,))
+    if rows:
+        clear_cache()
+    return len(rows)
+
+
+def save_uploaded_bill(upload_id, meta, image: bytes, mime: str, replace: bool) -> str:
+    """Create the bill (or overwrite the matching one when replace=True) and mark the upload Success."""
+    _require_writes()
+    month = meta["month"]
+    with tx() as c:
+        ex = c.execute(_FIND_BILL, (meta["city"], meta["property"], meta["owner"], month)).fetchone()
+        if ex and not replace:
+            raise Duplicate(ex["bill_id"])
+        if ex:
+            bid = ex["bill_id"]
+            c.execute("""INSERT INTO bill_images (bill_id, image, mime) VALUES (%s,%s,%s)
+                         ON CONFLICT (bill_id) DO UPDATE SET image=EXCLUDED.image, mime=EXCLUDED.mime""", (bid, image, mime))
+            c.execute("DELETE FROM extractions WHERE bill_id=%s", (bid,))
+            c.execute("DELETE FROM eval_results WHERE bill_id=%s", (bid,))
+            # a replaced sample bill no longer matches its ground truth, so it is treated as an uploaded bill
+            c.execute("UPDATE bills SET scan_status='not_scanned', source='upload', noise_level=NULL WHERE bill_id=%s", (bid,))
+            c.execute("""UPDATE uploads SET status='replaced', reason='Replaced by a newer upload', finished_at=now()
+                         WHERE bill_id=%s AND status='success'""", (bid,))
+        else:
+            o = c.execute("SELECT owner_id FROM owners WHERE lower(name)=lower(%s)", (meta["owner"],)).fetchone()
+            if not o:
+                o = c.execute("INSERT INTO owners (name) VALUES (%s) RETURNING owner_id", (meta["owner"],)).fetchone()
+            p = c.execute("""SELECT account_id FROM properties WHERE owner_id=%s AND lower(city)=lower(%s)
+                             AND lower(property_name)=lower(%s)""", (o["owner_id"], meta["city"], meta["property"])).fetchone()
+            if not p:
+                pid = c.execute("SELECT COALESCE(max(property_id),0)+1 AS n FROM properties").fetchone()["n"]
+                acct = f"UPL-{pid}"
+                c.execute("""INSERT INTO properties (property_id, owner_id, account_id, property_name, city)
+                             VALUES (%s,%s,%s,%s,%s)""", (pid, o["owner_id"], acct, meta["property"], meta["city"]))
+            else:
+                acct = p["account_id"]
+            n = c.execute("""SELECT COALESCE(max(substring(bill_id from 5)::int),0)+1 AS n FROM bills
+                             WHERE bill_id ~ '^upl_[0-9]+$'""").fetchone()["n"]
+            bid = f"upl_{n:03d}"
+            last = (month.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(days=1)
+            c.execute("""INSERT INTO bills (bill_id, account_id, bill_period_start, bill_period_end, scan_status, source)
+                         VALUES (%s,%s,%s,%s,'not_scanned','upload')""", (bid, acct, month, last))
+            c.execute("INSERT INTO bill_images (bill_id, image, mime) VALUES (%s,%s,%s)", (bid, image, mime))
+        c.execute("""UPDATE uploads SET status='success', reason=NULL, bill_id=%s, file=NULL, finished_at=now()
+                     WHERE upload_id=%s""", (bid, upload_id))
+    return bid

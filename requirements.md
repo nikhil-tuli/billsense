@@ -19,9 +19,10 @@ Separate repository from `doc-ocr-pipeline`. Scope: electricity bills only. A ch
 
 ### 4.1 Tabs
 1. **Bills**: browse and scan bills.
-2. **Extracted Data**: all bills that already have extracted data.
-3. **Evaluation**: accuracy, judge and usage metrics for the 20-bill sample.
-4. **Field guide**: all 33 bill fields with their meaning and whether they are critical (static; source `app/fields.py`).
+2. **Upload** (section 4.8): upload your own bill file, with history.
+3. **Extracted Data**: all bills that already have extracted data.
+4. **Evaluation**: accuracy, judge and usage metrics for the 20-bill sample.
+5. **Field guide**: all 33 bill fields with their meaning and whether they are critical (static; source `app/fields.py`).
 
 ### 4.2 Bills tab
 - Five cascading filters: **City**, **Owner**, **Property Name**, **Bill reading period**, **Scan status** (All / Scanned / Not scanned). Choosing any one narrows the others to matching values. Any one can be the starting filter. Reading-period options come from scanned bills only, so unscanned bills show only under "All".
@@ -57,6 +58,55 @@ Separate repository from `doc-ocr-pipeline`. Scope: electricity bills only. A ch
 - Short definitions are shown for arithmetic consistency, noise level and "fields without verdict".
 - The existing field-mismatch and judge-disagreement tables are kept as they are.
 
+### 4.8 Upload tab
+**Purpose:** store a bill file only. Upload never calls Gemini. Extraction stays a manual Scan on the Bills tab.
+
+**Form**
+- City: dropdown of existing cities, plus "Add new" (type a new value and press Enter).
+- Property name and Owner: dropdowns narrowed by city, each with "Add new". Sample and uploaded properties are both listed. A new property creates a minimal master record (placeholder account ID `UPL-n`; the real account ID shows after a scan).
+- Bill month-year: month and year pickers. Stored as the first day of the month.
+- File: jpg, jpeg, png or pdf, max 2 MB. PDF: first page only, rendered to an image.
+- Banner: "Don't upload real bills. This app has no login."
+
+**Two layers of file quality checking.** Layer 1 runs at upload (below, no model call) and rejects unusable files before they are stored as bills. Layer 2 runs at scan time: the 11-field completeness flag.
+
+**Checks, in order (no model call)**
+1. Size is 2 MB or less, and the file is not empty.
+2. Content check: the file's first bytes must match JPEG, PNG or PDF. The type is taken from the content, not the extension. Mismatch is rejected.
+3. The file must actually open: the image decodes, or the PDF opens, is not encrypted and has at least 1 page. A pixel cap guards against decompression bombs.
+4. Quality gate: minimum resolution and a blur score. Initial thresholds (config values, tunable): short side at least 500 px; blur score (variance of the Laplacian after resizing to 1000 px width) at least 8; at most 25 million pixels. Chosen from the 20 sample bills (600 to 740 px wide, scores 11 to 665) and blurred copies of them (heavy blur scores below 3).
+5. Duplicate check on city + property + owner + month-year (see below).
+- A file failing 2 to 4 is rejected. It is kept and logged as Failure with a reason (e.g. "Too blurry", "Resolution too low", "Not a valid PDF").
+
+**Duplicates**
+- On a match, a dialog asks "A bill already exists for <property>, <month-year>. Replace it?" with Replace and Cancel.
+- Replace overwrites the image and deletes the old extraction and judge verdicts. The bill returns to "Not scanned".
+- The old history row is marked "Replaced". Every upload keeps its own history row.
+
+**Progress and lock**
+- While an upload runs, the tab is greyed with a progress bar and real stages: Uploading, Validating, Quality check, Saving. No action is allowed on the tab.
+- One upload at a time (server-side lock as well).
+- The work runs on the server once the file is received. Closing the browser during the transfer saves nothing and creates no row. After receipt, processing normally completes without the browser. A row still Pending after 10 minutes (e.g. server restart) becomes Failure ("Interrupted").
+
+**History table** (newest first)
+- Columns: Uploaded date, City, Property, Owner, Bill month-year, File name, Status (Success / Failure / Pending / Replaced), Reason, View, Retry.
+- View (Success only): jumps to the Bills tab, filtered to that bill and expanded, to scan it and see extracted fields.
+- Retry (Failure only): re-runs the whole pipeline on the kept file (checks, quality gate, save). It covers technical failures (database error, timeout, interrupted upload) as well as threshold changes. The file is kept from the moment it is received, so Retry works even if the failure happened before the checks. To fix a genuinely bad file, upload a new one.
+
+**After upload**
+- The bill appears on the Bills tab as "Not scanned", with the bill image visible. Reading period stays blank until scanned (same rule as sample bills).
+- Scanning an uploaded bill counts toward the Gemini daily cap. If any of the 11 critical fields is missing after a scan, the bill shows "Unclear: n of 11 critical fields missing". The extraction is still stored.
+- Backend only: `bills.source` = sample or upload. No Source column in the UI.
+
+**Judge and Evaluation for uploads**
+- No ground truth. The judge (manual, as today) checks the extracted values against the bill image and gives correct / incorrect per field.
+- Evaluation gets a separate section "Uploaded bills (judge-estimated)": bills scanned, bills judged, % fields judged correct, % bills with all 11 critical fields judged correct, 11-field completeness %, fields without verdict.
+- Uploads are excluded from ground-truth accuracy, judge-vs-truth agreement and noise splits.
+
+**Out of scope:** deleting uploads, multi-page PDFs, authentication, extraction at upload time.
+
+**Open point:** initial quality thresholds (see Q&A below).
+
 ## 5. Technical requirements
 - **Database:** Neon Postgres is the only data store. Images are stored in Neon as `bytea` in their own table, and are never loaded for list views. No blob storage.
 - **Extraction model:** `gemini-3.5-flash-lite` (Gemini free tier). Verified limits: 15 requests/min, 500 requests/day, 250,000 input tokens/min. The model id is pinned, never an alias, and kept as a config value. Output is JSON against a fixed schema. Retry with backoff on 429.
@@ -78,6 +128,7 @@ Separate repository from `doc-ocr-pipeline`. Scope: electricity bills only. A ch
 | `extractions` | bill_id (one row, overwritten), primary-field columns, secondary_fields (JSONB), model, extracted_at |
 | `ground_truth` | bill_id, fields (JSONB) |
 | `extraction_runs` | append-only call log: bill_id, role (extractor/judge), model, input_tokens, output_tokens, latency_ms, status, error, retries, created_at |
+| `uploads` | upload_id, bill_id (null until success), city, property_name, owner, bill_month, file_name, mime, size_bytes, status (pending/success/failure/replaced), reason, uploaded_at, replaced_at, file (`bytea`, kept for non-success rows; the image of a successful upload lives in `bill_images`) |
 | `eval_results` | bill_id, field, truth, extracted, extractor_match, judge_verdict, judge_agrees_with_truth |
 
 Note: extracted data is overwritten on re-scan, but `extraction_runs` stays append-only so usage and latency metrics are not lost.
@@ -90,9 +141,41 @@ Note: extracted data is overwritten on re-scan, but `extraction_runs` stays appe
 - **Judge quality:** judge vs ground-truth agreement (precision/recall on "field is wrong"), and a list of disagreements.
 - **Breakdown:** all of the above split by noise level.
 
+### 4.9 Key Q&A and decisions (Upload tab)
+| Question | Decision |
+|---|---|
+| Upload extracts data with Gemini? | No. Upload only stores the file. Extraction stays a manual Scan, so the Gemini cap is not used by upload. |
+| Property and owner entry | Dropdown of existing uploaded values, plus "Add new". A new property creates a minimal master record. |
+| Bill period input | Month-year. Duplicate key = city + property + owner + month-year. |
+| Max size, PDF pages | 2 MB. PDF first page only. |
+| How is content validated? | First bytes must match JPEG, PNG or PDF; the file must open (image decodes; PDF not encrypted, at least 1 page). Type comes from content, not extension. |
+| Is file quality checked at upload? | Yes. Resolution and blur gate at upload rejects unclear files. Separately, at scan time a bill with any of the 11 critical fields missing shows "Unclear: n of 11 missing" (extraction still stored). |
+| Rejected files | Kept, status Failure with a reason. |
+| Duplicates | Prompt Replace / Cancel. Replace overwrites image, extraction and verdicts. Old history row marked Replaced. |
+| Replacing a sample bill | Allowed ("Allow replacement"). The bill becomes an uploaded bill: its noise level is cleared and it no longer counts in ground-truth metrics (the ground truth no longer matches the new image). The Replace prompt warns about this. |
+| Source column in UI? | No. `bills.source` exists in the backend only. |
+| Evaluation of uploads | No ground truth. The judge checks extracted values against the image; shown in a separate judge-estimated section. |
+| Progress and lock | Grey overlay, progress bar, real stages, no actions, one upload at a time. |
+| Browser closed mid-upload | During transfer: nothing saved, no row. After receipt: server finishes the work. Pending rows older than 10 minutes become Failure (Interrupted). |
+| Retry | Kept. Re-runs the whole pipeline on the kept file; also covers technical failures. |
+| Privacy | No login accepted. Banner: "Don't upload real bills." |
+| Thresholds | Picked by Claude: short side at least 500 px, blur score at least 8, at most 25 MP. Tunable config; revisit with real uploads. |
+| Implementation notes | The "Uploading" stage covers the file transfer and keeping the file on the history row. Pending rows older than 10 minutes are failed when the history loads. Time is shown in IST. Thresholds can be overridden with `UPLOAD_MIN_SHORT_SIDE`, `UPLOAD_MIN_BLUR_SCORE`, `UPLOAD_MAX_PIXELS`. |
+| Tab order | Bills, Upload, Extracted data, Evaluation, Field guide. |
+
+
+### 7a. Upload evals
+- **Quality gate:** build a labelled set by degrading the 20 sample bills (blur, low resolution, dark, crop). Report false-reject rate on good files and miss rate on bad ones. Calibrate thresholds from it.
+- **Validation:** unit cases for wrong extension, corrupt file, encrypted or empty PDF, oversize, multi-page PDF, huge pixel count.
+- **Duplicates:** replace and cancel leave exactly one bill, no orphan extraction or verdicts, correct history statuses.
+- **Reliability and latency:** success / failure / interrupted counts, failure reasons, p50 / p90 per stage (render, quality check, save).
+- **Post-scan quality:** 11-field completeness rate and judge-estimated field accuracy on uploaded bills.
+- **Human spot-check:** 10 uploaded bills reviewed by you against the image.
+
 ## 8. Risks and open items
 - **Deferred: ground truth is not independent of the images.** Today the generator creates each bill's values first, writes them to the ground-truth JSON, and renders the image from the same values. That is acceptable for this synthetic 20-bill evaluation but does not scale or reflect real bills. Later options: human-verified labels on real bills, or a separately keyed ground-truth source. Revisit before any real-bill or larger-scale evaluation.
 - **Judge strength:** a judge weaker than the extractor may miss real errors. Large 4 is Mistral's largest current multimodal model, and it is a different model family from the extractor. Judge-vs-ground-truth agreement is therefore a required result, and we should be ready to swap the judge model.
+- **Uploads:** bill files are stored in Neon (2 MB each; failures are kept too). No login means anyone with the URL can upload and view. Judge-estimated accuracy on uploads is not ground truth.
 - **Free-tier terms:** limits are verified (section 5). A third-party tracker reports that Mistral free-plan data may be used for model improvement unless opted out; confirm in your Mistral account settings. Gemini free-tier content may be used to improve Google's products, so no real bills.
 - **Render/Neon cold starts:** verify current free-tier sleep behaviour against the latency requirement.
 - **"Scan" wording:** interpreted as running extraction on an existing stored image, with no new image generated.
