@@ -38,14 +38,22 @@ and shows how accurate, fast and reliable both models are.
 - Secrets only in environment variables.
 
 ## Challenges faced and mitigation
-- Free-tier rate limits and quotas: pacing, retries that honour Retry-After, a daily cap and a single in-flight call.
-- Mistral rejected greedy sampling (`top_p must be 1`): payload fixed.
-- Mistral sometimes returns its answer as a list of chunks, which broke parsing: parser accepts both forms and falls back to the JSON braces.
-- Judge verdicts omitted or garbled: stored as `missing`, counted as a miss only when the extractor was wrong.
-- First page load returned HTTP 500 on cold start: page response timeout raised from 3 s to 30 s.
-- Slow loads: Render (Singapore) and Neon (US) are far apart and tabs re-queried every time. Added an in-memory cache, lean queries, a warm connection and lazy tabs. A same-region move is still advisable, and gains are not yet measured on Render.
-- Evaluation was hard to read: added a confusion matrix, info icons and plain definitions for each metric.
-- Ground truth is not independent of the images (both come from the same generator): accepted for this synthetic set and logged as a deferred item.
+
+### Model related constraints
+- Mistral rejected greedy sampling when the `top_p` parameter was not defined and forced `top_p` to be 1. This means it considers the full probability distribution, even though greedy picks only the top token.
+- Mistral sometimes returns the response as a list of chunks, which broke parsing: the parser accepts both forms and falls back to the JSON braces.
+- Judge LLM verdicts are sometimes omitted or garbled, so they are stored as missing. A missing verdict is counted as a miss only when the extractor was wrong.
+- Free-tier rate limits and quotas: pacing, retries that honour `Retry-After`, a daily cap on requests and a single in-flight call.
+
+### Page load taking longer than a few milliseconds
+- Slow loads: Render (Singapore) and Neon (US) are far apart and tabs re-queried every time. A same-region move for the Render UI is pending.
+- The first page load returned HTTP 500 on cold start from Render: the page response timeout was raised from 3 s to 30 s.
+- Added an in-memory cache, lean queries, a warm connection and lazy tabs.
+
+### Evaluation metrics
+- Evaluation metrics were a bit hard to read: added a confusion matrix (compares extractor vs LLM judge outputs), and info icons and plain definitions for a few metrics.
+
+This is still a work in progress and needs to be further improved.
 
 ## How to access the app
 App URL: https://billsense-c76d.onrender.com/ (free tier: the first load after idle can take about a minute).
